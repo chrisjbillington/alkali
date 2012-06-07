@@ -78,7 +78,7 @@ class AtomicState(object):
         self.nB_crossings = nB_crossings
         Ix, Iy, Iz, I2, nI, statesI, basisvecsI = angular_momentum_operators(I)
         Jx, Jy, Jz, J2, nJ, statesJ, basisvecsJ = angular_momentum_operators(J)  
-        Fx, Fy, self.Fz, F2, nIJ, statesIJ, basisvecsIJ = angular_momentum_product_space(I,J)
+        self.Fx, self.Fy, self.Fz, F2, nIJ, statesIJ, basisvecsIJ = angular_momentum_product_space(I,J)
         self.H_hfs  = Ahfs * (kron(Ix,Jx) + kron(Iy,Jy) + kron(Iz,Jz))/hbar**2
         if Bhfs != 0:
             # When Bhfs is zero, this term has a division by zero that
@@ -90,7 +90,9 @@ class AtomicState(object):
                                   3/2 * (kron(Ix,Jx) + kron(Iy,Jy) + kron(Iz,Jz))/hbar**2 - 
                                   I*(I+1)*J*(J+1)*identity(nIJ)) / \
                                  (2*I*(2*I-1)*J*(2*J-1))
-        self.mu = (gI*kron(Iz,identity(nJ)) + gJ*kron(identity(nI),Jz)) * mu_B / hbar
+        self.mu_x = (gI*kron(Ix,identity(nJ)) + gJ*kron(identity(nI),Jx)) * mu_B / hbar
+        self.mu_y = (gI*kron(Iy,identity(nJ)) + gJ*kron(identity(nI),Jy)) * mu_B / hbar     
+        self.mu_z = (gI*kron(Iz,identity(nJ)) + gJ*kron(identity(nI),Jz)) * mu_B / hbar
         evalsF, evecsF, S = eigensystem(F2)
         self.flist = sorted(map(find_f, evalsF))
         self.fingerprint = ''.join([str(x) for x in [I,J,gI,gJ,Ahfs,Bhfs,Bmax_crossings,nB_crossings]])
@@ -102,7 +104,7 @@ class AtomicState(object):
             self.crossings = []
         
     def Htot(self,B_z):
-        return self.H_hfs + self.mu*B_z
+        return self.H_hfs + self.mu_z*B_z
         
         
     def find_crossings(self):
@@ -178,7 +180,17 @@ class AtomicState(object):
         alphalist = self.flist
         return evals, alphalist, mlist, evecs
 
-
+    def rf_transition_matrix_element(self, alpha, m, alphaprime, mprime, direction, Bz):
+        evals, alphalist, mlist, evecs = self.energy_eigenstates(Bz)
+        for this_alpha, this_m, vec in zip(alphalist,mlist,evecs):
+            if this_alpha == alpha and this_m == m:
+                initial_state = vec[:]
+            if this_alpha == alphaprime and this_m == mprime:
+                final_state = vec[:]
+        magnetic_moments = {'x': self.mu_x, 'y':self.mu_y, 'z': self.mu_z}
+        mu = magnetic_moments[direction]
+        return det(final_state.H*mu*initial_state)
+        
 class AtomicLine(object):
     
     def __init__(self,groundstate,excited_state,omega_0,lifetime):
