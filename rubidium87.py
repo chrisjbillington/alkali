@@ -41,13 +41,25 @@ rubidium_87_D2_line = AtomicLine(rubidium_87_S12_state, rubidium_87_P32_state, o
 rubidium_87_D_line = FineStructureLine(rubidium_87_D1_line,rubidium_87_D2_line)
 
 if __name__ == '__main__':
+    import time
     # Example:
     Bz = 34e-4
-    transition_frequencies =  rubidium_87_D_line.get_transitions(Bz)
+    start_time = time.time()
+    i = 0
+    while True:
+        i += 1
+        print i/(time.time() - start_time)
+        transition_frequencies =  rubidium_87_S12_state.energy_eigenstates(Bz)
+        Bz += 1e-4
+        
     dipole_moment_1 = rubidium_87_D_line.transition_dipole_moment(1/2, 2, -2, 1/2, 2, -2, 0, Bz)
     dipole_moment_2 = rubidium_87_D_line.transition_dipole_moment(1/2, 1, -1, 1/2, 1, -1, 0, Bz)
 
 
    
+
+
+
+
 
     

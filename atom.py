@@ -141,10 +141,10 @@ class AtomicState(object):
             
             
     def energy_eigenstates(self, Bz):
+        print type(Bz)
+        if not self.crossings_found:
+            self.find_crossings()
         try:
-            if Bz != 0 and not self.crossings_found:
-                self.find_crossings()
-        except ValueError:
             results = []
             for B in Bz:
                 results.append(self.energy_eigenstates(B))
@@ -152,7 +152,9 @@ class AtomicState(object):
             vals = tuple(array(vals).transpose())
             evecs = tuple(array(evecs).transpose())
             return vals, alphalist[0], mlist[0], evecs
-            
+        except TypeError:
+            # Object is not iterable, proceed assuming its a single number:
+            pass
         if Bz == 0:
             # Degenerate eigenstates at zero field make it impossible
             # to calculate simultaneous eigenstates of both Htot and
