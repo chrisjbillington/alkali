@@ -31,12 +31,12 @@ gJ_S12 = 2.00233113
 gJ_P12 = 0.666
 gJ_P32 = 1.3362
  
-rudidium_87_S12_state = AtomicState(I=3/2, J=1/2, gI=gI, gJ=gJ_S12, Ahfs=A_S12)
+rubidium_87_S12_state = AtomicState(I=3/2, J=1/2, gI=gI, gJ=gJ_S12, Ahfs=A_S12)
 rubidium_87_P12_state = AtomicState(I=3/2, J=1/2, gI=gI, gJ=gJ_P12, Ahfs=A_P12)
 rubidium_87_P32_state = AtomicState(I=3/2, J=3/2, gI=gI, gJ=gJ_P32, Ahfs=A_P32, Bhfs=B_P32)
 
-rubidium_87_D1_line = AtomicLine(rudidium_87_S12_state, rubidium_87_P12_state, omega0_D1, lifetime_D1)
-rubidium_87_D2_line = AtomicLine(rudidium_87_S12_state, rubidium_87_P32_state, omega0_D2, lifetime_D2)
+rubidium_87_D1_line = AtomicLine(rubidium_87_S12_state, rubidium_87_P12_state, omega0_D1, lifetime_D1)
+rubidium_87_D2_line = AtomicLine(rubidium_87_S12_state, rubidium_87_P32_state, omega0_D2, lifetime_D2)
 
 rubidium_87_D_line = FineStructureLine(rubidium_87_D1_line,rubidium_87_D2_line)
 

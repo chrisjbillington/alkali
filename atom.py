@@ -12,6 +12,9 @@ d_B = a_0*e
 mu_B = 9.27401e-24
 
 
+def get_gF(F,I,J,gI,gJ):
+    return gJ*(F*(F+1) - I*(I+1) + J*(J+1))/(2*F*(F+1)) + gI*(F*(F+1) + I*(I+1) - J*(J+1))/(2*F*(F+1))
+
 def dipole_moment_zero_field(F, m_F, Fprime, m_Fprime, q, J, Jprime, I, lifetime, omega_0):
     """ Calculates the transition dipole moment in SI units (Coulomb
     metres) for given initial and final F,m_F states of a hydrogenic
@@ -43,6 +46,8 @@ def find_f(eigenval):
     f2 = (-hbar**2 + sqrt(4*eigenval*hbar**2 + hbar**4))/(2*hbar**2)
     return int(round(max([f1,f2])))
     
+def find_m(eigenval):
+    return int(round(eigenval/hbar))
     
 def angular_momentum_operators(J):
     statesJ = linspace(-J,J,2*J+1)
@@ -90,9 +95,9 @@ class AtomicState(object):
                                   3/2 * (kron(Ix,Jx) + kron(Iy,Jy) + kron(Iz,Jz))/hbar**2 - 
                                   I*(I+1)*J*(J+1)*identity(nIJ)) / \
                                  (2*I*(2*I-1)*J*(2*J-1))
-        self.mu_x = (gI*kron(Ix,identity(nJ)) + gJ*kron(identity(nI),Jx)) * mu_B / hbar
-        self.mu_y = (gI*kron(Iy,identity(nJ)) + gJ*kron(identity(nI),Jy)) * mu_B / hbar     
-        self.mu_z = (gI*kron(Iz,identity(nJ)) + gJ*kron(identity(nI),Jz)) * mu_B / hbar
+        self.mu_x = -(gI*kron(Ix,identity(nJ)) + gJ*kron(identity(nI),Jx)) * mu_B / hbar
+        self.mu_y = -(gI*kron(Iy,identity(nJ)) + gJ*kron(identity(nI),Jy)) * mu_B / hbar     
+        self.mu_z = -(gI*kron(Iz,identity(nJ)) + gJ*kron(identity(nI),Jz)) * mu_B / hbar
         evalsF, evecsF, S = eigensystem(F2)
         self.flist = sorted(map(find_f, evalsF))
         self.fingerprint = ''.join([str(x) for x in [I,J,gI,gJ,Ahfs,Bhfs,Bmax_crossings,nB_crossings]])
@@ -104,7 +109,7 @@ class AtomicState(object):
             self.crossings = []
         
     def Htot(self,B_z):
-        return self.H_hfs + self.mu_z*B_z
+        return self.H_hfs - self.mu_z*B_z
         
         
     def find_crossings(self):
