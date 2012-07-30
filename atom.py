@@ -141,7 +141,6 @@ class AtomicState(object):
             
             
     def energy_eigenstates(self, Bz):
-        print type(Bz)
         if not self.crossings_found:
             self.find_crossings()
         try:
