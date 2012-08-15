@@ -95,6 +95,8 @@ class AtomicState(object):
                                   3/2 * (kron(Ix,Jx) + kron(Iy,Jy) + kron(Iz,Jz))/hbar**2 - 
                                   I*(I+1)*J*(J+1)*identity(nIJ)) / \
                                  (2*I*(2*I-1)*J*(2*J-1))
+        # The following assumes that the sign convention is followed in
+        # which gI has a negative sign and gJ a positive one:
         self.mu_x = -(gI*kron(Ix,identity(nJ)) + gJ*kron(identity(nI),Jx)) * mu_B / hbar
         self.mu_y = -(gI*kron(Iy,identity(nJ)) + gJ*kron(identity(nI),Jy)) * mu_B / hbar     
         self.mu_z = -(gI*kron(Iz,identity(nJ)) + gJ*kron(identity(nI),Jz)) * mu_B / hbar
