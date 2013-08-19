@@ -6,6 +6,7 @@ from atom import AtomicState, AtomicLine, FineStructureLine, Laser, Simulation, 
 # 87Rb D line properties:
 
 m_Rb = 86.909180526*1.660539e-27
+m = m_Rb
 
 # Frequencies and linewidths: 
 f0_D2 = 384.2304844685e12
