@@ -19,6 +19,8 @@ omega0_D1 = 2*pi*f0_D1
 k0_D1 = 2*pi*f0_D1/c
 lifetime_D1 = 27.679e-9
 gamma_D1 = 1/lifetime_D1
+wavelength = 780.241209686e-9
+sigma0 = 2.906692937721e-13 # m^2
 
 # Hyperfine structure constants:
 A_S12 = 2*pi*hbar*3.417341305452145e9

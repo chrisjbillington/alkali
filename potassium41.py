@@ -19,6 +19,8 @@ omega0_D1 = 2*pi*f0_D1
 k0_D1 = 2*pi*f0_D1/c
 lifetime_D1 = 26.37e-9
 gamma_D1 = 1/lifetime_D1
+wavelength = 766.70045870e-9
+sigma0 = 3*wavelength**2 / (2*pi)
 
 # Hyperfine structure constants:
 A_S12 = 2*pi*hbar*127.0069352e6
@@ -32,22 +34,22 @@ gJ_S12 = 2.00229421
 gJ_P12 = 2./3
 gJ_P32 = 4./3
  
-potassium_87_S12_state = AtomicState(I=3/2, J=1/2, gI=gI, gJ=gJ_S12, Ahfs=A_S12)
-potassium_87_P12_state = AtomicState(I=3/2, J=1/2, gI=gI, gJ=gJ_P12, Ahfs=A_P12)
-potassium_87_P32_state = AtomicState(I=3/2, J=3/2, gI=gI, gJ=gJ_P32, Ahfs=A_P32, Bhfs=B_P32)
+potassium_41_S12_state = AtomicState(I=3/2, J=1/2, gI=gI, gJ=gJ_S12, Ahfs=A_S12)
+potassium_41_P12_state = AtomicState(I=3/2, J=1/2, gI=gI, gJ=gJ_P12, Ahfs=A_P12)
+potassium_41_P32_state = AtomicState(I=3/2, J=3/2, gI=gI, gJ=gJ_P32, Ahfs=A_P32, Bhfs=B_P32)
 
-potassium_87_D1_line = AtomicLine(potassium_87_S12_state, potassium_87_P12_state, omega0_D1, lifetime_D1)
-potassium_87_D2_line = AtomicLine(potassium_87_S12_state, potassium_87_P32_state, omega0_D2, lifetime_D2)
+potassium_41_D1_line = AtomicLine(potassium_41_S12_state, potassium_41_P12_state, omega0_D1, lifetime_D1)
+potassium_41_D2_line = AtomicLine(potassium_41_S12_state, potassium_41_P32_state, omega0_D2, lifetime_D2)
 
-potassium_87_D_line = FineStructureLine(potassium_87_D1_line,potassium_87_D2_line)
+potassium_41_D_line = FineStructureLine(potassium_41_D1_line,potassium_41_D2_line)
 
 if __name__ == '__main__':
     import time
     # Example:
     Bz = 34e-4
-    transition_frequencies =  potassium_87_D_line.get_transitions(Bz)
-    dipole_moment_1 = potassium_87_D_line.transition_dipole_moment(1/2, 2, -2, 1/2, 2, -2, 0, Bz)
-    dipole_moment_2 = potassium_87_D_line.transition_dipole_moment(1/2, 1, -1, 1/2, 1, -1, 0, Bz)
+    transition_frequencies =  potassium_41_D_line.get_transitions(Bz)
+    dipole_moment_1 = potassium_41_D_line.transition_dipole_moment(1/2, 2, -2, 1/2, 2, -2, 0, Bz)
+    dipole_moment_2 = potassium_41_D_line.transition_dipole_moment(1/2, 1, -1, 1/2, 1, -1, 0, Bz)
 
 
    
