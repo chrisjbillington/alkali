@@ -132,7 +132,7 @@ class AtomicState(object):
                 bestmatch = min(abs(val - predicted))
                 if not bestmatch == abs(val - predicted[i]):
                     prediction_failures.append(i)
-            if prediction_failures:
+            if len(prediction_failures) == 2:
                 self.crossings.append((Bz-0.5*(B_range[1]-B_range[0]), prediction_failures))
                 a,b = prediction_failures
                 self.crossingx.extend([Bz,Bz])
