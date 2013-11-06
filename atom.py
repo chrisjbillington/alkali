@@ -50,9 +50,9 @@ def find_m(eigenval):
     return int(round(eigenval/hbar))
     
 def angular_momentum_operators(J):
-    statesJ = linspace(-J,J,2*J+1)
-    Jp = diag([hbar*sqrt(J*(J+1) - m_j*(m_j + 1)) for m_j in linspace(-J,J-1,2*J)], -1)
-    Jm = diag([hbar*sqrt(J*(J+1) - m_j*(m_j - 1)) for m_j in linspace(-J+1,J,2*J)], 1)
+    statesJ = linspace(J,-J,2*J+1)
+    Jp = diag([hbar*sqrt(J*(J+1) - m_j*(m_j + 1)) for m_j in linspace(-J,J-1,2*J)], 1)
+    Jm = diag([hbar*sqrt(J*(J+1) - m_j*(m_j - 1)) for m_j in linspace(-J+1,J,2*J)], -1)
     Jx = matrix((Jp + Jm)/2)
     Jy = matrix((Jp - Jm)/(2j))
     Jz = matrix(diag([hbar*m_j for m_j in statesJ]))
