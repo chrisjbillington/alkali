@@ -102,7 +102,7 @@ class AtomicState(object):
         self.mu_z = -(gI*kron(Iz,identity(nJ)) + gJ*kron(identity(nI),Jz)) * mu_B / hbar
         evalsF, evecsF, S = eigensystem(F2)
         self.flist = sorted(map(find_f, evalsF))
-        self.mlist = sorted(map(find_m, evalsF))
+        self.mlist = sorted(map(find_m, evalsF), reverse=True)
         self.fingerprint = ''.join([str(x) for x in [I,J,gI,gJ,Ahfs,Bhfs,Bmax_crossings,nB_crossings]])
         try:
             self.crossings = pickle.load(open('crossings_'+self.fingerprint+'.pickle'))
