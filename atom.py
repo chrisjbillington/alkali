@@ -188,7 +188,7 @@ class AtomicState(object):
         # to at low field. Most people call them alpha, or gamma or
         # something like that. They are useful for labeling the states
         # even though they are not eigenvalues of anything.
-        alphalist = self.flist
+        alphalist = sorted(self.flist)
         return evals, alphalist, mlist, evecs
 
     def rf_transition_matrix_element(self, alpha, m, alphaprime, mprime, direction, Bz):
