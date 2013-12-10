@@ -44,10 +44,10 @@ def eigensystem(A):
 def find_f(eigenval):
     f1 = (-hbar**2 - sqrt(4*eigenval*hbar**2 + hbar**4))/(2*hbar**2)
     f2 = (-hbar**2 + sqrt(4*eigenval*hbar**2 + hbar**4))/(2*hbar**2)
-    return int(round(max([f1,f2])))
+    return int(round(2*max([f1,f2])))/2
     
 def find_m(eigenval):
-    return int(round(eigenval/hbar))
+    return int(round(2*eigenval/hbar))/2
     
 def angular_momentum_operators(J):
     statesJ = linspace(J,-J,2*J+1)
