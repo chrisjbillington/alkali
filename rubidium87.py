@@ -3,10 +3,12 @@ from pylab import *
 
 from atom import AtomicState, AtomicLine, FineStructureLine, Laser, Simulation, hbar, c, epsilon_0, e, d_B
        
-# 87Rb D line properties:
+# 87Rb D line properties
+# data from Steck, "Rubidium 87 D Line Data," revision 2.1.4, 23 December 2010
+# http://steck.us/alkalidata
 
-m_Rb = 86.909180526*1.660539e-27
-m = m_Rb
+m_Rb87 = 1.443160648e-25
+m = m_Rb87
 
 # Frequencies and linewidths: 
 f0_D2 = 384.2304844685e12
@@ -41,13 +43,13 @@ rubidium_87_P32_state = AtomicState(I=3/2, J=3/2, gI=gI, gJ=gJ_P32, Ahfs=A_P32, 
 rubidium_87_D1_line = AtomicLine(rubidium_87_S12_state, rubidium_87_P12_state, omega0_D1, lifetime_D1)
 rubidium_87_D2_line = AtomicLine(rubidium_87_S12_state, rubidium_87_P32_state, omega0_D2, lifetime_D2)
 
-rubidium_87_D_line = FineStructureLine(rubidium_87_D1_line,rubidium_87_D2_line)
+rubidium_87_D_line = FineStructureLine(rubidium_87_D1_line, rubidium_87_D2_line)
 
 if __name__ == '__main__':
     import time
     # Example:
     Bz = 34e-4
-    transition_frequencies =  rubidium_87_D_line.get_transitions(Bz)
+    transition_frequencies = rubidium_87_D_line.get_transitions(Bz)
     dipole_moment_1 = rubidium_87_D_line.transition_dipole_moment(1/2, 2, -2, 1/2, 2, -2, 0, Bz)
     dipole_moment_2 = rubidium_87_D_line.transition_dipole_moment(1/2, 1, -1, 1/2, 1, -1, 0, Bz)
 

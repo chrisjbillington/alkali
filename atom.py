@@ -3,14 +3,15 @@ from pylab import *
 from wigner import Wigner3j, Wigner6j
 import pickle
 
-hbar = 1.054572e-34
+hbar = 1.054571628e-34
 c = 2.99792458e8
-epsilon_0 = 625000.0/(22468879468420441.0*pi) 
-e = 1.6021765e-19
-a_0 = 5.29177209e-11
+mu_0 = 4*pi*1e-7
+epsilon_0 = 1/(mu_0*c**2)
+e = 1.602176487e-19
+a_0 = 5.2917720859e-11
 d_B = a_0*e
-mu_B = 9.27401e-24
-gs = 2.00231930436153
+mu_B = 9.27400915e-24
+gs = 2.0023193043622
 
 def get_gF(F,I,J,gI,gJ):
     return gJ*(F*(F+1) - I*(I+1) + J*(J+1))/(2*F*(F+1)) + gI*(F*(F+1) + I*(I+1) - J*(J+1))/(2*F*(F+1))
