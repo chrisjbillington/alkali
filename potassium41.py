@@ -51,8 +51,16 @@ if __name__ == '__main__':
     dipole_moment_1 = potassium_41_D_line.transition_dipole_moment(1/2, 2, -2, 1/2, 2, -2, 0, Bz)
     dipole_moment_2 = potassium_41_D_line.transition_dipole_moment(1/2, 1, -1, 1/2, 1, -1, 0, Bz)
 
-
-   
+    # Another example:
+    Bz = linspace(0,200e-4,1000)
+    evals, alphalist, mlist, evecs = potassium_41_S12_state.energy_eigenstates(Bz)
+    for eval, alpha, m in zip(evals, alphalist, mlist):
+        plot(Bz*1e4, eval/(2*pi*hbar*1e6), label=r'$|%d, %d\rangle$'%(alpha, m))
+    grid(True)
+    xlabel('B (Gauss)')
+    ylabel('E (MHz)')
+    legend()
+    show()
 
 
 
