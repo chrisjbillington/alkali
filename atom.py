@@ -58,7 +58,7 @@ def angular_momentum_operators(J):
     Jy = matrix((Jp - Jm)/(2j))
     Jz = matrix(diag([hbar*m_j for m_j in statesJ]))
     J2 = Jx**2 + Jy**2 + Jz**2
-    nJ = 2*J + 1
+    nJ = int(round(2*J + 1))
     basisvecsJ = [transpose(matrix(vec)) for vec in identity(nJ)]
     return Jx, Jy, Jz, J2, nJ, statesJ, basisvecsJ
     
@@ -66,7 +66,7 @@ def angular_momentum_operators(J):
 def angular_momentum_product_space(I,J):
     Ix, Iy, Iz, I2, nI, statesI, basisvecsI = angular_momentum_operators(I)
     Jx, Jy, Jz, J2, nJ,statesJ, basisvecsJ = angular_momentum_operators(J)
-    nIJ = (2*I+1)*(2*J+1)
+    nIJ = int(round((2*I+1)*(2*J+1)))
     basisvecsIJ = [transpose(matrix(vec)) for vec in identity(nIJ)]
     statesIJ = outer(statesI, statesJ)
     Fx, Fy, Fz = [kron(Ia,identity(nJ)) + kron(identity(nI), Ja) \
@@ -174,7 +174,7 @@ class AtomicState(object):
         # there so that they get sorted too, though their values aren't
         # being compared (since energies aren't degenerate -- we lifted
         # the degeneracy).
-        sortinglist = zip(evals,mlist, evecs)
+        sortinglist = list(zip(evals,mlist, evecs))
         sortinglist.sort()
         # Now to apply some swapping to account for crossings at lower
         # fields than we're at. The states will then be sorted by the
@@ -216,9 +216,9 @@ class AtomicLine(object):
         self.linewidth = 1/lifetime
     
         ground_energies, alphalist, mlist, evecs = self.groundstate.energy_eigenstates(0)
-        self.ground_sublevels = zip(['S%d/2'%int(2*self.J)]*len(alphalist), alphalist, mlist)
+        self.ground_sublevels = list(zip(['S%d/2'%int(2*self.J)]*len(alphalist), alphalist, mlist))
         excited_energies, alphalist, mlist, evecs = self.excited_state.energy_eigenstates(0)
-        self.excited_sublevels = zip(['P%d/2'%int(2*self.Jprime)]*len(alphalist), alphalist, mlist)
+        self.excited_sublevels = list(zip(['P%d/2'%int(2*self.Jprime)]*len(alphalist), alphalist, mlist))
         
         self.transitions = {}
         
@@ -338,7 +338,7 @@ class Simulation(object):
             self.dipole_moments[i,j] = self.dipole_moments[j,i] = atomic_line.transition_dipole_moment(int(J[1])/2,alpha, m, int(Jprime[1])/2,alphaprime, mprime, q=m-mprime, Bz=Bz)
             for k, laser in enumerate(lasers):
                 if m-mprime == laser.q and int(Jprime[1])/2 - int(J[1])/2 == laser.deltaJ:
-                    print k, states[i], states[j]
+                    print(k, states[i], states[j])
                     field_amplitude_mask[k][i,j] = field_amplitude_mask[k][j,i] = 1
                     detunings[k][i,j] = laser.omega - omega
                     detunings[k][j,i] = omega - laser.omega # This is actually -1 times the detuning.
@@ -365,7 +365,7 @@ class Simulation(object):
         overall_decay_probability = sum(individual_decay_probabilities)
         self.sum_of_decay_probs += overall_decay_probability
         if rand() < overall_decay_probability:
-            print 'emission!'
+            print('emission!')
             #Pick an excited state:
             excited_state_index = searchsorted(cumsum(individual_decay_probabilities/overall_decay_probability), rand())
             # Randomly pick a groundstate, weighted by their coupling
