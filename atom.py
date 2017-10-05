@@ -229,8 +229,8 @@ class AtomicLine(object):
             return self.transitions[Bz]
         ground_energies, alphalist, mlist, evecs = self.groundstate.energy_eigenstates(Bz)
         excited_energies, alphalist, mlist, evecs = self.excited_state.energy_eigenstates(Bz)
-        ground = zip(*zip(*self.ground_sublevels)[1:]) # This just bumps the J's out of the list
-        excited = zip(*zip(*self.ground_sublevels)[1:])
+        ground = zip(*list(zip(*self.ground_sublevels))[1:]) # This just bumps the J's out of the list
+        excited = zip(*list(zip(*self.ground_sublevels))[1:])
         transitions = outer(self.ground_sublevels,self.excited_sublevels)
         energies = outer(ground_energies,excited_energies)
         for transition, energy_pair in zip(transitions[:],energies[:]):
