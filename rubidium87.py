@@ -54,7 +54,19 @@ if __name__ == '__main__':
     dipole_moment_2 = rubidium_87_D_line.transition_dipole_moment(1/2, 1, -1, 1/2, 1, -1, 0, Bz)
 
 
-   
+    # Another example:
+    Bz = linspace(0,200e-4,1000)
+    evals, alphalist, mlist, evecs = rubidium_87_P32_state.energy_eigenstates(Bz)
+    for eval, alpha, m in zip(evals, alphalist, mlist):
+        plot(Bz*1e4, eval/(2*pi*hbar*1e6), label=r'$|%d, %d\rangle$'%(alpha, m))
+    grid(True)
+    xlabel('B (Gauss)')
+    ylabel('E (MHz)')
+    legend()
+    show()
+
+
+
 
 
 

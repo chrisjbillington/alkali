@@ -106,11 +106,12 @@ class AtomicState(object):
         self.mlist = []
         for F in sorted(set(self.flist), reverse=True):
             self.mlist.extend([F - n for n in range(int(round(2*F+1)))])
-        self.fingerprint = ''.join([str(x) for x in [I,J,gI,gJ,Ahfs,Bhfs,Bmax_crossings,nB_crossings]])
+        self.fingerprint = hex(hash((I,J,gI,gJ,Ahfs,Bhfs,Bmax_crossings,nB_crossings)) + sys.maxsize + 1)[2:]
         try:
-            self.crossings = pickle.load(open('crossings_'+self.fingerprint+'.pickle'))
-            self.crossings_found = True
-        except:
+            with open('crossings_'+self.fingerprint+'.pickle', 'rb') as f:
+                self.crossings = pickle.load(f)
+                self.crossings_found = True
+        except OSError:
             self.crossings_found = False
             self.crossings = []
         
