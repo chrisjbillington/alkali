@@ -249,16 +249,26 @@ class AtomicLine(object):
         
         
     def transition_dipole_moment(self, J, alpha, m, Jprime, alphaprime, mprime, q, Bz):
-        
+        if J != self.J or Jprime != self.Jprime:
+            msg = 'values of J and Jprime do not match the ground and excited state J quantum numbers'
+            raise ValueError(msg)
         evals, alphalist, mlist, evecs = self.groundstate.energy_eigenstates(Bz)
         for this_alpha, this_m, vec in zip(alphalist,mlist,evecs):
             if this_alpha == alpha and this_m == m:
                 initial_state = vec[:]
+                break
+        else:
+            msg = 'initial state quantum numbers out of range'
+            raise ValueError(msg)
                 
         evals, alphalist, mlist, evecs = self.excited_state.energy_eigenstates(Bz)
         for this_alpha, this_m, vec in zip(alphalist,mlist,evecs):
             if this_alpha == alphaprime and this_m == mprime:
                 final_state = vec[:]
+                break
+        else:
+            msg = 'final state quantum numbers out of range'
+            raise ValueError(msg)
         
         dipole_moment = 0
         for E, F, mF, ket in zip(*self.groundstate.energy_eigenstates(0)):
