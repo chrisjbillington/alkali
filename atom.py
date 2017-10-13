@@ -103,7 +103,8 @@ def U_CG(I, J):
     for i, (mI, mJ) in enumerate(mImJlist):
         for j, (F, mF) in enumerate(FmFlist):
             U[i, j] = ClebschGordan(I, mI, J, mJ, F, mF)
-    return U
+    basisvecsFmF = [vec for vec in identity(n_mI * n_mJ)]
+    return U, FmFlist, basisvecsFmF
 
 class AtomicState(object):
     
