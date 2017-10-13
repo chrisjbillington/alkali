@@ -1,4 +1,5 @@
 from __future__ import division
+import numpy as np
 from pylab import *
 from wigner import Wigner3j, Wigner6j
 import pickle
@@ -27,7 +28,6 @@ def dipole_moment_zero_field(F, m_F, Fprime, m_Fprime, q, J, Jprime, I, lifetime
     
     return reduced_dipole_moment_F * (-1)**(Fprime - 1 + m_F) * sqrt(2*F+1) * Wigner3j(Fprime, 1, F, m_Fprime, q, -m_F)
  
- 
 def outer(list_a,list_b):
     outer_ab = []
     for a in list_a:
@@ -35,12 +35,10 @@ def outer(list_a,list_b):
             outer_ab.append((a,b))
     return outer_ab
     
-    
 def eigensystem(A):
     evals, evecsarray = eigh(A) 
     evecslist = [matrix(evecsarray[:,i]) for i in range(len(evals))]
     return evals, evecslist, matrix(evecsarray)
-
 
 def find_f(eigenval):
     f1 = (-hbar**2 - sqrt(4*eigenval*hbar**2 + hbar**4))/(2*hbar**2)
@@ -51,21 +49,25 @@ def find_m(eigenval):
     return int(round(2*eigenval/hbar))/2
     
 def angular_momentum_operators(J):
-    mJlist = linspace(-J, J, 2*J + 1)
-    Jp = diag([hbar * sqrt(J*(J+1) - mJ*(mJ + 1)) for mJ in mJlist[:-1]], 1)
-    Jm = diag([hbar*sqrt(J*(J+1) - mJ*(mJ - 1)) for mJ in mJlist[1:]], -1)
-    Jx = matrix((Jp + Jm)/2)
-    Jy = matrix((Jp - Jm)/(2j))
+    """Construct matrix representations of the angular momentum operators Jx,
+    Jy, Jz and J2 in the eigenbasis of Jz for given total angular momentum
+    quantum number J. Return them, as well as the number of angular momentum
+    projection states, a list of angular momentum projection quantum numbers
+    the matrix elements (in descending order of mJ)."""
+    n_mJ = int(round(2*J + 1))
+    mJlist = linspace(J, -J, n_mJ)
+    Jp = diag([hbar * sqrt(J*(J+1) - mJ*(mJ + 1)) for mJ in mJlist if mJ < J], -1)
+    Jm = diag([hbar*sqrt(J*(J+1) - mJ*(mJ - 1)) for mJ in mJlist if mJ > -J], 1)
+    Jx = matrix((Jp + Jm) / 2)
+    Jy = matrix((Jp - Jm) / 2j)
     Jz = matrix(diag([hbar*mJ for mJ in mJlist]))
     J2 = Jx**2 + Jy**2 + Jz**2
-    nJ = int(round(2*J + 1))
-    basisvecsJ = [transpose(matrix(vec)) for vec in identity(nJ)]
-    return Jx, Jy, Jz, J2, nJ, mJlist, basisvecsJ
-    
+    basisvecs_mJ = [transpose(matrix(vec)) for vec in identity(n_mJ)]
+    return Jx, Jy, Jz, J2, n_mJ, mJlist, basisvecs_mJ
 
 def angular_momentum_product_space(I,J):
     Ix, Iy, Iz, I2, nI, statesI, basisvecsI = angular_momentum_operators(I)
-    Jx, Jy, Jz, J2, nJ,statesJ, basisvecsJ = angular_momentum_operators(J)
+    Jx, Jy, Jz, J2, nJ, statesJ, basisvecsJ = angular_momentum_operators(J)
     nIJ = int(round((2*I+1)*(2*J+1)))
     basisvecsIJ = [transpose(matrix(vec)) for vec in identity(nIJ)]
     statesIJ = outer(statesI, statesJ)
@@ -73,8 +75,38 @@ def angular_momentum_product_space(I,J):
                   for Ia, Ja in zip((Ix,Iy,Iz),(Jx,Jy,Jz))]
     F2 = Fx**2 + Fy**2 + Fz**2
     return Fx, Fy, Fz, F2, nIJ, statesIJ, basisvecsIJ
-    
- 
+
+def ClebschGordan(I, m_I, J, m_J, F, m_F):
+    """return the Clebsch-Gordan coeffienct <I, m_I, J, m_J | F, m_F>"""
+    if m_F != m_I + m_J:
+        return 0
+    return (-1)**(I - J + m_F) * sqrt(2*F+1) * Wigner3j(I, J, F, m_I, m_J, -m_F)
+
+def U_CG(I, J):
+    """Construct the unitary of Clebsch-Gordan coefficients that transforms a
+    vector from the |m_I, m_J> basis into the |F, m_F> basis for a given I and
+    J. Return the matrix, a list of (F, m_F) tuples of quantum numers and a
+    list of basis vectors in the (F, m_F) basis that they correspond to."""
+    n_mI = int(round(2*I + 1))
+    n_mJ = int(round(2*J + 1))
+    mIlist = linspace(I, -I, n_mI)
+    mJlist = linspace(J, -J, n_mJ)
+    mImJlist = outer(mIlist, mJlist)
+    n_F = 1 + I + J - abs(I - J)
+    Flist = linspace(I + J, abs(I - J), n_F)
+    FmFlist = []
+    for F in Flist:
+        n_mF = int(round(2*F + 1))
+        for mF in linspace(F, -F, n_mF):
+            FmFlist.append((F, mF))
+    print(mImJlist)
+    print(FmFlist)
+    U = np.zeros((n_mI * n_mJ, n_mI * n_mJ))
+    for i, (mI, mJ) in enumerate(mImJlist):
+        for j, (F, mF) in enumerate(FmFlist):
+            U[i, j] = ClebschGordan(I, mI, J, mJ, F, mF)
+    return U
+
 class AtomicState(object):
     
     def __init__(self, I, J, gI, gJ, Ahfs, Bhfs=0, Bmax_crossings=500e-4, nB_crossings=5000):
@@ -111,13 +143,12 @@ class AtomicState(object):
             with open('crossings_'+self.fingerprint+'.pickle', 'rb') as f:
                 self.crossings = pickle.load(f)
                 self.crossings_found = True
-        except OSError:
+        except IOError:
             self.crossings_found = False
             self.crossings = []
         
     def Htot(self,B_z):
         return self.H_hfs - self.mu_z*B_z
-        
         
     def find_crossings(self):
         B_range = linspace(0,self.Bmax_crossings,self.nB_crossings) 
@@ -145,7 +176,6 @@ class AtomicState(object):
             evals.append(new_evals)  
             self.crossings_found = True
             pickle.dump(self.crossings,open('crossings_'+self.fingerprint+'.pickle','wb'))
-            
             
     def energy_eigenstates(self, Bz):
         if not self.crossings_found:
@@ -204,6 +234,7 @@ class AtomicState(object):
         mu = magnetic_moments[direction]
         return det(final_state.H*mu*initial_state)
         
+
 class AtomicLine(object):
     
     def __init__(self,groundstate,excited_state,omega_0,lifetime):
@@ -246,7 +277,6 @@ class AtomicLine(object):
         result  = dict([((transition[0],transition[1]),omega) for transition, omega in zip(transitions,omegas)])
         self.transitions[Bz] = result # cache for future speed ups
         return result
-        
         
     def transition_dipole_moment(self, J, alpha, m, Jprime, alphaprime, mprime, q, Bz):
         if J != self.J or Jprime != self.Jprime:
