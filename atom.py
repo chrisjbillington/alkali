@@ -99,8 +99,6 @@ def U_CG(I, J):
         n_mF = int(round(2*F + 1))
         for mF in linspace(F, -F, n_mF):
             FmFlist.append((F, mF))
-    print(mImJlist)
-    print(FmFlist)
     U = np.zeros((n_mI * n_mJ, n_mI * n_mJ))
     for i, (mI, mJ) in enumerate(mImJlist):
         for j, (F, mF) in enumerate(FmFlist):
