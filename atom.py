@@ -56,8 +56,8 @@ def angular_momentum_operators(J):
     the matrix elements (in descending order of mJ)."""
     n_mJ = int(round(2*J + 1))
     mJlist = linspace(J, -J, n_mJ)
-    Jp = diag([hbar * sqrt(J*(J+1) - mJ*(mJ + 1)) for mJ in mJlist if mJ < J], -1)
-    Jm = diag([hbar*sqrt(J*(J+1) - mJ*(mJ - 1)) for mJ in mJlist if mJ > -J], 1)
+    Jp = diag([hbar * sqrt(J*(J+1) - mJ*(mJ + 1)) for mJ in mJlist if mJ < J], 1)
+    Jm = diag([hbar*sqrt(J*(J+1) - mJ*(mJ - 1)) for mJ in mJlist if mJ > -J], -1)
     Jx = matrix((Jp + Jm) / 2)
     Jy = matrix((Jp - Jm) / 2j)
     Jz = matrix(diag([hbar*mJ for mJ in mJlist]))
