@@ -1,7 +1,7 @@
 from __future__ import division
 from pylab import *
 
-from atom import AtomicState, AtomicLine, FineStructureLine, Laser, Simulation, hbar, c, epsilon_0, e, d_B
+from .atom import AtomicState, AtomicLine, FineStructureLine, Laser, Simulation, hbar, c, epsilon_0, e, d_B
        
 # 87Rb D line properties
 # data from Steck, "Rubidium 87 D Line Data," revision 2.1.4, 23 December 2010

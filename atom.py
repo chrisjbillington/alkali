@@ -1,7 +1,7 @@
 from __future__ import division
 import numpy as np
 from pylab import *
-from wigner import Wigner3j, Wigner6j
+from .wigner import Wigner3j, Wigner6j
 import pickle
 
 hbar = 1.054571628e-34
