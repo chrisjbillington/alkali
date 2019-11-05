@@ -64,8 +64,10 @@ def lru_cache(maxsize=128):
 
     return decorator
 
-def get_gF(F,I,J,gI,gJ):
-    return gJ*(F*(F+1) - I*(I+1) + J*(J+1))/(2*F*(F+1)) + gI*(F*(F+1) + I*(I+1) - J*(J+1))/(2*F*(F+1))
+def get_gF(F, I, J, gI, gJ):
+    return gJ * (F * (F + 1) - I * (I + 1) + J * (J + 1)) / (2 * F * (F + 1)) + gI * (
+        F * (F + 1) + I * (I + 1) - J * (J + 1)
+    ) / (2 * F * (F + 1))
 
 def dipole_moment_zero_field(F, m_F, Fprime, m_Fprime, q, J, Jprime, I, lifetime, omega_0):
     """ Calculates the transition dipole moment in SI units (Coulomb
@@ -86,17 +88,27 @@ def outer(list_a,list_b):
     return outer_ab
     
 def eigensystem(A):
-    evals, evecsarray = eigh(A) 
-    evecslist = [matrix(evecsarray[:,i]) for i in range(len(evals))]
-    return evals, evecslist, matrix(evecsarray)
+    evals, U = eigh(A)
+    evecs = list(U.T)
+    return evals, evecs, U
+
+def round_to_half_integer(x):
+    """Round x to a half-integer, returning an int if the result is a whole number and a
+    float otherwise"""
+    double_x = int(round(2 * x))
+    if double_x % 2:
+        return double_x / 2
+    else:
+        return int(double_x / 2)
 
 def find_f(eigenval):
-    f1 = (-hbar**2 - sqrt(4*eigenval*hbar**2 + hbar**4))/(2*hbar**2)
-    f2 = (-hbar**2 + sqrt(4*eigenval*hbar**2 + hbar**4))/(2*hbar**2)
-    return int(round(2*max([f1,f2])))/2
+    f1 = (-hbar ** 2 - sqrt(4 * eigenval * hbar ** 2 + hbar ** 4)) / (2 * hbar ** 2)
+    f2 = (-hbar ** 2 + sqrt(4 * eigenval * hbar ** 2 + hbar ** 4)) / (2 * hbar ** 2)
+    return round_to_half_integer(max([f1, f2]))
+
     
 def find_m(eigenval):
-    return int(round(2*eigenval/hbar))/2
+    return round_to_half_integer(eigenval / hbar)
     
 def angular_momentum_operators(J):
     """Construct matrix representations of the angular momentum operators Jx,
@@ -104,41 +116,45 @@ def angular_momentum_operators(J):
     quantum number J. Return them, as well as the number of angular momentum
     projection states, a list of angular momentum projection quantum numbers
     the matrix elements (in descending order of mJ)."""
-    n_mJ = int(round(2*J + 1))
+    n_mJ = int(round(2 * J + 1))
     mJlist = linspace(J, -J, n_mJ)
-    Jp = diag([hbar * sqrt(J*(J+1) - mJ*(mJ + 1)) for mJ in mJlist if mJ < J], 1)
-    Jm = diag([hbar*sqrt(J*(J+1) - mJ*(mJ - 1)) for mJ in mJlist if mJ > -J], -1)
-    Jx = matrix((Jp + Jm) / 2)
-    Jy = matrix((Jp - Jm) / 2j)
-    Jz = matrix(diag([hbar*mJ for mJ in mJlist]))
-    J2 = Jx**2 + Jy**2 + Jz**2
-    basisvecs_mJ = [transpose(matrix(vec)) for vec in identity(n_mJ)]
+    Jp = diag([hbar * sqrt(J * (J + 1) - mJ * (mJ + 1)) for mJ in mJlist if mJ < J], 1)
+    Jm = diag(
+        [hbar * sqrt(J * (J + 1) - mJ * (mJ - 1)) for mJ in mJlist if mJ > -J], -1
+    )
+    Jx = (Jp + Jm) / 2
+    Jy = (Jp - Jm) / 2j
+    Jz = diag([hbar * mJ for mJ in mJlist])
+    J2 = Jx @ Jx + Jy @ Jy + Jz @ Jz
+    basisvecs_mJ = list(identity(n_mJ))
     return Jx, Jy, Jz, J2, n_mJ, mJlist, basisvecs_mJ
 
-def angular_momentum_product_space(I,J):
+def angular_momentum_product_space(I, J):
     Ix, Iy, Iz, I2, nI, statesI, basisvecsI = angular_momentum_operators(I)
     Jx, Jy, Jz, J2, nJ, statesJ, basisvecsJ = angular_momentum_operators(J)
-    nIJ = int(round((2*I+1)*(2*J+1)))
-    basisvecsIJ = [transpose(matrix(vec)) for vec in identity(nIJ)]
+    nIJ = int(round((2 * I + 1) * (2 * J + 1)))
+    basisvecsIJ = list(identity(nIJ))
     statesIJ = outer(statesI, statesJ)
-    Fx, Fy, Fz = [kron(Ia,identity(nJ)) + kron(identity(nI), Ja) \
-                  for Ia, Ja in zip((Ix,Iy,Iz),(Jx,Jy,Jz))]
-    F2 = Fx**2 + Fy**2 + Fz**2
+    Fx, Fy, Fz = [
+        kron(Ia, identity(nJ)) + kron(identity(nI), Ja)
+        for Ia, Ja in zip((Ix, Iy, Iz), (Jx, Jy, Jz))
+    ]
+    F2 = Fx @ Fx + Fy @ Fy + Fz @ Fz
     return Fx, Fy, Fz, F2, nIJ, statesIJ, basisvecsIJ
 
 def ClebschGordan(I, m_I, J, m_J, F, m_F):
     """return the Clebsch-Gordan coeffienct <I, m_I, J, m_J | F, m_F>"""
     if m_F != m_I + m_J:
         return 0
-    return (-1)**(I - J + m_F) * sqrt(2*F+1) * Wigner3j(I, J, F, m_I, m_J, -m_F)
+    return (-1) ** (I - J + m_F) * sqrt(2 * F + 1) * Wigner3j(I, J, F, m_I, m_J, -m_F)
 
 def U_CG(I, J):
     """Construct the unitary of Clebsch-Gordan coefficients that transforms a
     vector from the |m_I, m_J> basis into the |F, m_F> basis for a given I and
     J. Return the matrix, a list of (F, m_F) tuples of quantum numers and a
     list of basis vectors in the (F, m_F) basis that they correspond to."""
-    n_mI = int(round(2*I + 1))
-    n_mJ = int(round(2*J + 1))
+    n_mI = int(round(2 * I + 1))
+    n_mJ = int(round(2 * J + 1))
     mIlist = linspace(I, -I, n_mI)
     mJlist = linspace(J, -J, n_mJ)
     mImJlist = outer(mIlist, mJlist)
@@ -146,7 +162,7 @@ def U_CG(I, J):
     Flist = linspace(I + J, abs(I - J), n_F)
     FmFlist = []
     for F in Flist:
-        n_mF = int(round(2*F + 1))
+        n_mF = int(round(2 * F + 1))
         for mF in linspace(F, -F, n_mF):
             FmFlist.append((F, mF))
     U = np.zeros((n_mI * n_mJ, n_mI * n_mJ))
@@ -166,17 +182,18 @@ class AtomicState(object):
         Ix, Iy, Iz, I2, nI, statesI, basisvecsI = angular_momentum_operators(I)
         Jx, Jy, Jz, J2, nJ, statesJ, basisvecsJ = angular_momentum_operators(J)  
         self.Fx, self.Fy, self.Fz, F2, nIJ, statesIJ, basisvecsIJ = angular_momentum_product_space(I,J)
-        self.H_hfs  = Ahfs * (kron(Ix,Jx) + kron(Iy,Jy) + kron(Iz,Jz))/hbar**2
+        # I dot J in units of hbar**2:
+        sIsJ = (kron(Ix, Jx) + kron(Iy, Jy) + kron(Iz, Jz)) / hbar ** 2
+        self.H_hfs = Ahfs * sIsJ
         if Bhfs != 0:
-            # When Bhfs is zero, this term has a division by zero that
-            # doesn't get caught. Subsequently multiplying by zero just
-            # turns the Infs into Nans. So to avoid getting a H_hfs
-            # full of NaNs, we have to skip over this term when it
-            # doesn't apply.
-            self.H_hfs += Bhfs * (3*((kron(Ix,Jx) + kron(Iy,Jy) + kron(Iz,Jz))/hbar**2)**2 +
-                                  3/2 * (kron(Ix,Jx) + kron(Iy,Jy) + kron(Iz,Jz))/hbar**2 - 
-                                  I*(I+1)*J*(J+1)*identity(nIJ)) / \
-                                 (2*I*(2*I-1)*J*(2*J-1))
+            # When Bhfs is zero, this term has a division by zero that doesn't get
+            # caught. Subsequently multiplying by zero just turns the Infs into Nans. So
+            # to avoid getting a H_hfs full of NaNs, we have to skip over this term when
+            # it doesn't apply.
+            numerator = (3 * sIsJ @ sIsJ + 3 / 2 * sIsJ - I * (I + 1) * J * (J + 1) * identity(nIJ))
+            denominator = 2 * I * (2 * I - 1) * J * (2 * J - 1)
+            self.H_hfs += Bhfs * numerator / denominator
+                                 
         # The following assumes that the sign convention is followed in
         # which gI has a negative sign and gJ a positive one:
         self.mu_x = -(gI*kron(Ix,identity(nJ)) + gJ*kron(identity(nI),Jx)) * mu_B / hbar
@@ -196,8 +213,8 @@ class AtomicState(object):
             self.crossings_found = False
             self.crossings = []
 
-    def Htot(self,B_z):
-        return self.H_hfs - self.mu_z*B_z
+    def Htot(self, B_z):
+        return self.H_hfs - self.mu_z * B_z
         
     def find_crossings(self):
         B_range = linspace(0,self.Bmax_crossings,self.nB_crossings) 
@@ -241,34 +258,30 @@ class AtomicState(object):
             # Object is not iterable, proceed assuming its a single number:
             pass
         if Bz == 0:
-            # Degenerate eigenstates at zero field make it impossible
-            # to calculate simultaneous eigenstates of both Htot and
-            # Fz. We'll lift that degeneracy just a little bit. This
-            # only affects the accuracy of the energy eigenvalues in
-            # the 13th decimal place -- far beyond the accuracy of any
-            # of these calculations.
+            # Degenerate eigenstates at zero field make it impossible to calculate
+            # simultaneous eigenstates of both Htot and Fz. We'll lift that degeneracy
+            # just a little bit. This only affects the accuracy of the energy
+            # eigenvalues in the 13th decimal place -- far beyond the accuracy of any of
+            # these calculations.
             Bz = 1e-15
-        evals, evecs, S = eigensystem(self.Htot(Bz))
-        mlist=[int(round(real(det(evec.H*self.Fz*evec))/hbar)) for evec in evecs]
-        # Sort by energy eigenvalues. m and the eigenvectors are in
-        # there so that they get sorted too, though their values aren't
-        # being compared (since energies aren't degenerate -- we lifted
-        # the degeneracy).
-        sortinglist = list(zip(evals,mlist, evecs))
+        evals, evecs, _ = eigensystem(self.Htot(Bz))
+        mlist = [find_m((evec.conj() @ self.Fz @ evec).real) for evec in evecs]
+        # Sort by energy eigenvalues. m and the eigenvectors are in there so that they
+        # get sorted too, though their values aren't being compared (since energies
+        # aren't degenerate -- we lifted the degeneracy).
+        sortinglist = list(zip(evals, mlist, evecs))
         sortinglist.sort()
-        # Now to apply some swapping to account for crossings at lower
-        # fields than we're at. The states will then be sorted by the
-        # energy eigenvalues that they converge to at low but nonzero
-        # field.
-        for field, (a,b) in self.crossings:
+        # Now to apply some swapping to account for crossings at lower fields than we're
+        # at. The states will then be sorted by the energy eigenvalues that they
+        # converge to at low but nonzero field.
+        for field, (a, b) in self.crossings:
             if Bz > field:
-                sortinglist[a], sortinglist[b] = sortinglist[b],sortinglist[a]
+                sortinglist[a], sortinglist[b] = sortinglist[b], sortinglist[a]
         # This is Python idiom for unzipping:
         evals, mlist, evecs = zip(*sortinglist)
-        # Now here's a list of the F values that these states converge
-        # to at low field. Most people call them alpha, or gamma or
-        # something like that. They are useful for labeling the states
-        # even though they are not eigenvalues of anything.
+        # Now here's a list of the F values that these states converge to at low field.
+        # Most people call them alpha, or gamma or something like that. They are useful
+        # for labeling the states even though they are not eigenvalues of anything.
         alphalist = sorted(self.flist)
         return evals, alphalist, mlist, evecs
 
@@ -286,14 +299,14 @@ class AtomicState(object):
 
     def rf_transition_matrix_element(self, alpha, m, alphaprime, mprime, direction, Bz):
         evals, alphalist, mlist, evecs = self.energy_eigenstates(Bz)
-        for this_alpha, this_m, vec in zip(alphalist,mlist,evecs):
+        for this_alpha, this_m, vec in zip(alphalist, mlist, evecs):
             if this_alpha == alpha and this_m == m:
                 initial_state = vec[:]
             if this_alpha == alphaprime and this_m == mprime:
                 final_state = vec[:]
-        magnetic_moments = {'x': self.mu_x, 'y':self.mu_y, 'z': self.mu_z}
+        magnetic_moments = {'x': self.mu_x, 'y': self.mu_y, 'z': self.mu_z}
         mu = magnetic_moments[direction]
-        return det(final_state.H*mu*initial_state)
+        return final_state.conj() @ mu @ initial_state
         
 
 class AtomicLine(object):
@@ -359,10 +372,10 @@ class AtomicLine(object):
             for Eprime, Fprime, mFprime, ketprime in zip(*self.excited_state.energy_eigenstates(0)):
                 if (mF - mFprime != q) or abs(Fprime - F) > 1:
                     continue
-                initial_projection = det(initial_state.H*ket)
+                initial_projection = initial_state.conj() @ ket
                 strength = dipole_moment_zero_field(F, mF, Fprime, mFprime, q, self.J, 
                                                    self.Jprime, self.I, self.lifetime,self.omega_0)
-                final_projection = det(ketprime.H*final_state)
+                final_projection = ketprime.conj() @ final_state
                 dipole_moment += initial_projection*strength*final_projection
         
         return real(dipole_moment)
