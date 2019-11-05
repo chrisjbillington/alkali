@@ -1,5 +1,5 @@
 from __future__ import division
-from scipy.misc import factorial
+from scipy.special import factorial
 from pylab import floor, sqrt
 from numpy import arange
 
