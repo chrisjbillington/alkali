@@ -14,6 +14,56 @@ d_B = a_0*e
 mu_B = 9.27400915e-24
 gs = 2.0023193043622
 
+def make_key(obj):
+    """ For an arbitrarily nested list, tuple, set, or dict, convert all numpy arrays to
+    tuples of their data and metadata, convert all lists and dicts to tuples, and store
+    every item alongside its type. This creates an object that can be used as a
+    dictionary key to represent the original types and data of the nested objects that
+    might otherwise not be able to be used as a dictionary key due to not being
+    hashable."""
+    if isinstance(obj, (list, tuple)):
+        return tuple(make_key(item) for item in obj)
+    elif isinstance(obj, set):
+        return set(make_key(item) for item in obj)
+    elif isinstance(obj, dict):
+        return tuple((key, make_key(value)) for key, value in obj.items())
+    elif isinstance(obj, np.ndarray):
+        return obj.tobytes(), obj.dtype, obj.shape
+    else:
+        return type(obj), obj
+
+
+def lru_cache(maxsize=128):
+    """Decorator to cache up to `maxsize` most recent results of a function call. Custom
+    implementation instead of using `functools.lru_cache()`, so that we can create
+    dictionary keys for unhashable types like numpy arrays, which do not work with
+    `functools.lru_cache()`."""
+
+    def decorator(func):
+        import functools, collections
+
+        cache = collections.OrderedDict()
+
+        @functools.wraps(func)
+        def wrapped(*args, **kwargs):
+            cache_key = make_key((args, kwargs))
+            try:
+                result = cache[cache_key]
+            except KeyError:
+                try:
+                    result = cache[cache_key] = func(*args, **kwargs)
+                except Exception as e:
+                    # We don't want the KeyError in the exception:
+                    raise e from None
+            cache.move_to_end(cache_key)
+            while len(cache) > maxsize:
+                cache.popitem(last=False)
+            return result
+
+        return wrapped
+
+    return decorator
+
 def get_gF(F,I,J,gI,gJ):
     return gJ*(F*(F+1) - I*(I+1) + J*(J+1))/(2*F*(F+1)) + gI*(F*(F+1) + I*(I+1) - J*(J+1))/(2*F*(F+1))
 
@@ -145,7 +195,7 @@ class AtomicState(object):
         except IOError:
             self.crossings_found = False
             self.crossings = []
-        
+
     def Htot(self,B_z):
         return self.H_hfs - self.mu_z*B_z
         
@@ -222,6 +272,18 @@ class AtomicState(object):
         alphalist = sorted(self.flist)
         return evals, alphalist, mlist, evecs
 
+    @lru_cache()
+    def get_transitions(self, Bz):
+        energies, alphalist, mlist, _ = self.energy_eigenstates(Bz)
+        states = list(zip(energies, alphalist, mlist))
+        state_pairs = outer(states, states)
+        transitions = {}
+        for (E, alpha, m), (Eprime, alphaprime, mprime) in state_pairs:
+            if abs(mprime - m) <= 1 and not (m == mprime and alpha == alphaprime):
+                omega = (Eprime - E) / hbar
+                transitions[(alpha, m), (alphaprime, mprime)] = omega
+        return transitions
+
     def rf_transition_matrix_element(self, alpha, m, alphaprime, mprime, direction, Bz):
         evals, alphalist, mlist, evecs = self.energy_eigenstates(Bz)
         for this_alpha, this_m, vec in zip(alphalist,mlist,evecs):
@@ -251,22 +313,16 @@ class AtomicLine(object):
         excited_energies, alphalist, mlist, evecs = self.excited_state.energy_eigenstates(0)
         self.excited_sublevels = list(zip(['P%d/2'%int(2*self.Jprime)]*len(alphalist), alphalist, mlist))
         
-        self.transitions = {}
-        
         self.linewidths = array([0]*len(self.ground_sublevels) + [self.linewidth]*len(self.excited_sublevels))
         
+    @lru_cache()
     def get_transitions(self,Bz):
-        if Bz in self.transitions:
-            return self.transitions[Bz]
         ground_energies, alphalist, mlist, evecs = self.groundstate.energy_eigenstates(Bz)
         excited_energies, alphalist, mlist, evecs = self.excited_state.energy_eigenstates(Bz)
-        ground = zip(*list(zip(*self.ground_sublevels))[1:]) # This just bumps the J's out of the list
-        excited = zip(*list(zip(*self.ground_sublevels))[1:])
         transitions = outer(self.ground_sublevels,self.excited_sublevels)
         energies = outer(ground_energies,excited_energies)
         for transition, energy_pair in zip(transitions[:],energies[:]):
             (J,alpha,m),(Jprime,alphaprime,mprime) = transition
-            E,Eprime = energy_pair
             if abs(mprime-m) > 1:
                 index = transitions.index(transition)
                 del transitions[index]
@@ -274,7 +330,6 @@ class AtomicLine(object):
                 
         omegas = tuple([(Eprime-E)/hbar for E, Eprime in energies])
         result  = dict([((transition[0],transition[1]),omega) for transition, omega in zip(transitions,omegas)])
-        self.transitions[Bz] = result # cache for future speed ups
         return result
         
     def transition_dipole_moment(self, J, alpha, m, Jprime, alphaprime, mprime, q, Bz):
