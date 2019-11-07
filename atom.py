@@ -166,6 +166,15 @@ def dipole_moment_zero_field(F, mF, Fprime, mFprime, J, Jprime, I, lifetime, ome
     transition. This calculation assumes the primed quantum numbers correspond to the
     excited state, so it is computing the dipole transition moment from ground to
     excited state."""
+    # Work around numpy issue https://github.com/numpy/numpy/issues/8917, Can't raise
+    # integers to negative integer powers if the power is a numpy integer:
+    F, mF, Fprime, mFprime, J, Jprime, I = [
+        float(x) for x in (F, mF, Fprime, mFprime, J, Jprime, I)
+    ]
+    # Think there is a factor of sqrt((2J+1)/(2J'-1)) or similar missing from this
+    # expression? Think again - it cancels out when you write the ground -> excited
+    # reduced dipole moment in terms of the excited -> ground one that is derived from
+    # the linewidth:
     reduced_dipole_J = (-1) ** (Jprime - J) * np.sqrt(
         3 * pi * epsilon_0 * hbar * c ** 3 / (lifetime * omega_0 ** 3)
     )
@@ -280,7 +289,7 @@ class AtomicState(object):
         self.basis_vectors = make_FmF_basis(I, J)
 
         # Identity matrix in the F, mF basis:
-        II = np.identity(_int((2 * I + 1) * (2 * I + 1)))
+        II = np.identity(len(self.basis_vectors))
 
         # I dot J in units of hbar**2:
         rIJ = (self.Ix @ self.Jx + self.Iy @ self.Jy + self.Iz @ self.Jz) / hbar ** 2

@@ -1,7 +1,7 @@
 from __future__ import division
 from pylab import *
 
-from atom import AtomicState, AtomicLine, FineStructureLine, Laser, Simulation, hbar, c, epsilon_0, e, d_B
+from .atom import AtomicState, AtomicLine, FineStructureLine, hbar, c, epsilon_0, e, d_B
        
 # 41K D line properties:
 
@@ -38,24 +38,33 @@ potassium_41_S12_state = AtomicState(I=3/2, J=1/2, gI=gI, gJ=gJ_S12, Ahfs=A_S12)
 potassium_41_P12_state = AtomicState(I=3/2, J=1/2, gI=gI, gJ=gJ_P12, Ahfs=A_P12)
 potassium_41_P32_state = AtomicState(I=3/2, J=3/2, gI=gI, gJ=gJ_P32, Ahfs=A_P32, Bhfs=B_P32)
 
-potassium_41_D1_line = AtomicLine(potassium_41_S12_state, potassium_41_P12_state, omega0_D1, lifetime_D1)
-potassium_41_D2_line = AtomicLine(potassium_41_S12_state, potassium_41_P32_state, omega0_D2, lifetime_D2)
+potassium_41_D1_line = AtomicLine(
+    potassium_41_S12_state, potassium_41_P12_state, omega0_D1, lifetime_D1
+)
+potassium_41_D2_line = AtomicLine(
+    potassium_41_S12_state, potassium_41_P32_state, omega0_D2, lifetime_D2
+)
 
-potassium_41_D_line = FineStructureLine(potassium_41_D1_line,potassium_41_D2_line)
+potassium_41_D_line = FineStructureLine(
+    potassium_41_D1_line, potassium_41_D2_line, N=4, L=0, Nprime=4, Lprime=1
+)
 
 if __name__ == '__main__':
     import time
     # Example:
     Bz = 34e-4
-    transition_frequencies =  potassium_41_D_line.get_transitions(Bz)
-    dipole_moment_1 = potassium_41_D_line.transition_dipole_moment(1/2, 2, -2, 1/2, 2, -2, 0, Bz)
-    dipole_moment_2 = potassium_41_D_line.transition_dipole_moment(1/2, 1, -1, 1/2, 1, -1, 0, Bz)
+    transition_frequencies =  potassium_41_D_line.transitions(Bz)
+    dipole_moment_1 = potassium_41_D_line.transition_dipole_moment(1/2, 2, -2, 1/2, 2, -2, Bz)
+    dipole_moment_2 = potassium_41_D_line.transition_dipole_moment(1/2, 1, -1, 1/2, 1, -1, Bz)
 
     # Another example:
     Bz = linspace(0,200e-4,1000)
-    evals, alphalist, mlist, evecs = potassium_41_S12_state.energy_eigenstates(Bz)
-    for eval, alpha, m in zip(evals, alphalist, mlist):
-        plot(Bz*1e4, eval/(2*pi*hbar*1e6), label=r'$|%d, %d\rangle$'%(alpha, m))
+    eigenstates = potassium_41_S12_state.energy_eigenstates(Bz)
+
+    for (alpha, mF), (E, psi) in eigenstates.items():
+        plot(
+            Bz * 1e4, E / (2 * pi * hbar * 1e6), label=r'$|%d, %d\rangle$' % (alpha, mF)
+        )
     grid(True)
     xlabel('B (Gauss)')
     ylabel('E (MHz)')
