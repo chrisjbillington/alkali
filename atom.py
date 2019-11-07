@@ -1,18 +1,20 @@
-from __future__ import division
+import os
+from tempfile import gettempdir
 import numpy as np
-from pylab import *
 from .wigner import Wigner3j, Wigner6j
-import pickle
+import shelve
 
+pi = np.pi
 hbar = 1.054571628e-34
 c = 2.99792458e8
-mu_0 = 4*pi*1e-7
-epsilon_0 = 1/(mu_0*c**2)
+mu_0 = 4 * pi * 1e-7
+epsilon_0 = 1 / (mu_0 * c ** 2)
 e = 1.602176487e-19
 a_0 = 5.2917720859e-11
-d_B = a_0*e
+d_B = a_0 * e
 mu_B = 9.27400915e-24
 gs = 2.0023193043622
+
 
 def make_key(obj):
     """ For an arbitrarily nested list, tuple, set, or dict, convert all numpy arrays to
@@ -64,169 +66,284 @@ def lru_cache(maxsize=128):
 
     return decorator
 
+
 def get_gF(F, I, J, gI, gJ):
-    return gJ * (F * (F + 1) - I * (I + 1) + J * (J + 1)) / (2 * F * (F + 1)) + gI * (
-        F * (F + 1) + I * (I + 1) - J * (J + 1)
-    ) / (2 * F * (F + 1))
+    term1 = gJ * (F * (F + 1) - I * (I + 1) + J * (J + 1)) / (2 * F * (F + 1))
+    term2 = gI * (F * (F + 1) + I * (I + 1) - J * (J + 1)) / (2 * F * (F + 1))
+    return term1 + term2
 
-def dipole_moment_zero_field(F, m_F, Fprime, m_Fprime, q, J, Jprime, I, lifetime, omega_0):
-    """ Calculates the transition dipole moment in SI units (Coulomb
-    metres) for given initial and final F,m_F states of a hydrogenic
-    atom. Also required are the initial and final J's, the nuclear spin,
-    and the lifetime and angular frequency of the transition."""
 
-    reduced_dipole_moment_J = sqrt(3*pi*epsilon_0 * hbar * c**3 / (lifetime * omega_0**3) * (2*Jprime + 1)/ (2*J + 1))
-    reduced_dipole_moment_F = reduced_dipole_moment_J * (-1)**(Fprime + J + 1 + I) * sqrt((2*Fprime+1) * (2*J+1))*Wigner6j(J,Jprime,1,Fprime,F,I)
-    
-    return reduced_dipole_moment_F * (-1)**(Fprime - 1 + m_F) * sqrt(2*F+1) * Wigner3j(Fprime, 1, F, m_Fprime, q, -m_F)
- 
-def outer(list_a,list_b):
+def outer(list_a, list_b):
     outer_ab = []
     for a in list_a:
         for b in list_b:
-            outer_ab.append((a,b))
+            outer_ab.append((a, b))
     return outer_ab
-    
-def eigensystem(A):
-    evals, U = eigh(A)
-    evecs = list(U.T)
-    return evals, evecs, U
 
-def round_to_half_integer(x):
+
+def _int(x):
+    """Round x to an integer, returning an int dtype"""
+    x = np.round(np.array(x))
+    return np.array(x, dtype=int)
+
+
+def _halfint(x):
     """Round x to a half-integer, returning an int if the result is a whole number and a
     float otherwise"""
-    double_x = int(round(2 * x))
-    if double_x % 2:
-        return double_x / 2
+    x = np.array(x)
+    twice_x = np.round(2 * x)
+    # Halve and decide whether to return as float or int (array)
+    if np.any(twice_x % 2):
+        return twice_x / 2
     else:
-        return int(double_x / 2)
+        return np.array(twice_x // 2, dtype=int)
 
-def find_f(eigenval):
-    f1 = (-hbar ** 2 - sqrt(4 * eigenval * hbar ** 2 + hbar ** 4)) / (2 * hbar ** 2)
-    f2 = (-hbar ** 2 + sqrt(4 * eigenval * hbar ** 2 + hbar ** 4)) / (2 * hbar ** 2)
-    return round_to_half_integer(max([f1, f2]))
 
-    
-def find_m(eigenval):
-    return round_to_half_integer(eigenval / hbar)
-    
+def _make_state_label(N, L, J):
+    """Return a state label like 5P3/2 for a state with given principal, orbital angular
+    momentum and total electronic angular momentum quantum numbers"""
+    SPECTROSCOPIC_LABELS = {0: 'S', 1: 'P', 2: 'D', 3: 'F'}
+    J = _halfint(J)
+    if isinstance(J, int):
+        Jstr = f'{J}'
+    else:
+        Jstr = f'{_int(2 * J)}/2'
+    return f"{N}{SPECTROSCOPIC_LABELS[L]}{Jstr}"
+
+
+def find_F(eigenval):
+    return _halfint((-1 + np.sqrt(4 * eigenval / hbar ** 2 + 1)) / 2)
+
+
+def find_mF(eigenval):
+    return _halfint(eigenval / hbar)
+
+
+def Hconj(A):
+    """Hermitian conjugate of matrix in last two dimensions"""
+    return A.conj().swapaxes(-1, -2)
+
+
+def matrixel(u, A, v):
+    """Matrix element between u and v, which are vectors in their last dimension, of A,
+    which is a matrix in its last two dimensions"""
+    return np.einsum('...i,...ij,...j', u.conj(), A, v)
+
+
+def braket(u, v):
+    """braket of u and v, which are vectors in their last dimension"""
+    return np.einsum('...i,...i', u.conj(), v)
+
+
+def ketbra(u, v):
+    """ketbra of u and v, which are vectors in their last dimension"""
+    return np.einsum('...i,...j', u.conj(), v)
+
+
+def sorted_eigh(A):
+    """np.linalg.eigh with results sorted by eigenvalue from smallest to largest"""
+    evals, U = np.linalg.eigh(A)
+    indices = evals.argsort(axis=-1)
+    evals = np.take_along_axis(evals, indices, axis=-1)
+    U = np.take_along_axis(U, indices[..., np.newaxis, :], axis=-1)
+    return evals, U
+
+
+def ClebschGordan(F, mF, I, J, mI, mJ):
+    """return the Clebsch-Gordan coeffienct <F, mF|I, J, mI, mJ>"""
+    if mF != mI + mJ:
+        return 0
+    # Work around numpy issue https://github.com/numpy/numpy/issues/8917, Can't raise
+    # integers to negative integer powers if the power is a numpy integer:
+    F, mF, I, J, mI, mJ = [float(x) for x in (F, mF, I, J, mI, mJ)]
+    return (-1) ** int(I - J + mF) * np.sqrt(2 * F + 1) * Wigner3j(I, J, F, mI, mJ, -mF)
+
+
+def dipole_moment_zero_field(F, mF, Fprime, mFprime, J, Jprime, I, lifetime, omega_0):
+    """ Calculate the transition dipole moment in SI units (Coulomb metres) for given
+    initial and final F, mF states of a hydrogenic atom. Also required are the initial
+    and final J's, the nuclear spin, and the lifetime and angular frequency of the
+    transition. This calculation assumes the primed quantum numbers correspond to the
+    excited state, so it is computing the dipole transition moment from ground to
+    excited state."""
+    reduced_dipole_J = (-1) ** (Jprime - J) * np.sqrt(
+        3 * pi * epsilon_0 * hbar * c ** 3 / (lifetime * omega_0 ** 3)
+    )
+    reduced_dipole_F = (
+        (-1) ** (F + Jprime + 1 + I)
+        * np.sqrt((2 * F + 1) * (2 * Jprime + 1))
+        * Wigner6j(Jprime, J, 1, F, Fprime, I)
+        * reduced_dipole_J
+    )
+    return ClebschGordan(Fprime, mFprime, F, 1, mF, mFprime - mF) * reduced_dipole_F
+
+def make_mImJ_basis(I, J):
+    """Construct a dict mapping (mI, mJ) quantum numbers to basis vectors in the
+    convention used by this module in which the |mI, mJ> basis is ordered first by mI
+    from highest to lowest; basis states with equal mI are then ordered by mJ from
+    highest to lowest."""
+    mImJ = outer(_halfint(np.arange(I, -I - 1, -1)), _halfint(np.arange(J, -J - 1, -1)))
+    return {nums: vec for nums, vec in zip(mImJ, np.identity(len(mImJ)))}
+
+
+def make_FmF_basis(I, J):
+    """Construct a dict mapping (F, mF) quantum numbers to basis vectors in the
+    convention used by this module in which the |F, mF> basis is ordered first by F from
+    highest to lowest; basis states with equal F are then ordered by mF from highest to
+    lowest."""
+    FmF = [
+        (F, mF)
+        for F in _halfint(np.arange(I + J, abs(I - J) - 1, -1))
+        for mF in _halfint(np.arange(F, -F - 1, -1))
+    ]
+    return {nums: vec for nums, vec in zip(FmF, np.identity(len(FmF)))}
+
+
+def U_CG(I, J):
+    """Construct the unitary of Clebsch-Gordan coefficients that transforms a vector
+    from the |m_I, m_J> basis into the |F, m_F> basis for a given I and J. The
+    convention used for ordering the basis vectors is as described by make_mImJ_basis()
+    and make_FmF_basis()."""
+    mImJ = make_mImJ_basis(I, J)
+    FmF = make_FmF_basis(I, J)
+    U = np.zeros((len(FmF), len(FmF)))
+    for i, (F, mF) in enumerate(FmF):
+        for j, (mI, mJ) in enumerate(mImJ):
+            U[i, j] = ClebschGordan(F, mF, I, J, mI, mJ)
+    return U
+
+
 def angular_momentum_operators(J):
-    """Construct matrix representations of the angular momentum operators Jx,
-    Jy, Jz and J2 in the eigenbasis of Jz for given total angular momentum
-    quantum number J. Return them, as well as the number of angular momentum
-    projection states, a list of angular momentum projection quantum numbers
-    the matrix elements (in descending order of mJ)."""
-    n_mJ = int(round(2 * J + 1))
-    mJlist = linspace(J, -J, n_mJ)
-    Jp = diag([hbar * sqrt(J * (J + 1) - mJ * (mJ + 1)) for mJ in mJlist if mJ < J], 1)
-    Jm = diag(
-        [hbar * sqrt(J * (J + 1) - mJ * (mJ - 1)) for mJ in mJlist if mJ > -J], -1
+    """Construct matrix representations of the angular momentum operators Ĵ = (Ĵx,
+    Ĵy, Ĵz) and Ĵ² in the eigenbasis of Ĵz for a system with total angular momentum
+    quantum number J. The basis is ordered first by m_I from highest to lowest; basis
+    states with equal m_I are then ordered by m_J from highest to lowest."""
+    n_mJ = _int(2 * J + 1)
+    mJlist = _halfint(np.linspace(J, -J, n_mJ))
+    Jp = np.diag(
+        [hbar * np.sqrt(J * (J + 1) - mJ * (mJ + 1)) for mJ in mJlist if mJ < J], 1
+    )
+    Jm = np.diag(
+        [hbar * np.sqrt(J * (J + 1) - mJ * (mJ - 1)) for mJ in mJlist if mJ > -J], -1
     )
     Jx = (Jp + Jm) / 2
     Jy = (Jp - Jm) / 2j
-    Jz = diag([hbar * mJ for mJ in mJlist])
+    Jz = np.diag([hbar * mJ for mJ in mJlist])
     J2 = Jx @ Jx + Jy @ Jy + Jz @ Jz
-    basisvecs_mJ = list(identity(n_mJ))
-    return Jx, Jy, Jz, J2, n_mJ, mJlist, basisvecs_mJ
+    return Jx, Jy, Jz, J2
+
 
 def angular_momentum_product_space(I, J):
-    Ix, Iy, Iz, I2, nI, statesI, basisvecsI = angular_momentum_operators(I)
-    Jx, Jy, Jz, J2, nJ, statesJ, basisvecsJ = angular_momentum_operators(J)
-    nIJ = int(round((2 * I + 1) * (2 * J + 1)))
-    basisvecsIJ = list(identity(nIJ))
-    statesIJ = outer(statesI, statesJ)
-    Fx, Fy, Fz = [
-        kron(Ia, identity(nJ)) + kron(identity(nI), Ja)
-        for Ia, Ja in zip((Ix, Iy, Iz), (Jx, Jy, Jz))
-    ]
+    """Compute angular momentum operators for the product space of two systems with
+    total angular momentum quantum numbers I and J. Return the vector angular momentum
+    operators Î, Ĵ and F̂ = Î + Ĵ as well as Î², Ĵ² and F̂². All operators are
+    returned in the simultaneous eigenbasis of F̂z and F̂². The basis is ordered first
+    by F from highest to lowest; states with equal F are then ordered by mF by highest
+    to lowest. Returns: (Ix, Iy, Iz, I2), (Jx, Jy, Jz, J2), (Fx, Fy, Fz, F2)"""
+
+    # Operators in the individual subspaces:
+    Ix, Iy, Iz, I2 = angular_momentum_operators(I)
+    Jx, Jy, Jz, J2 = angular_momentum_operators(J)
+
+    # The transformation into the F, mF basis (the basis that diagonalises F2 and Fz):
+    U = U_CG(I, J)
+
+    # Identity matrices for the subspaces
+    II_I = np.identity(_int(2 * I + 1))
+    II_J = np.identity(_int(2 * J + 1))
+
+    # Promote operators into the product space and transform into the F, mF basis:
+    Ix, Iy, Iz, I2 = [U @ np.kron(Ia, II_J) @ Hconj(U) for Ia in [Ix, Iy, Iz, I2]]
+    Jx, Jy, Jz, J2 = [U @ np.kron(II_I, Ja) @ Hconj(U) for Ja in [Jx, Jy, Jz, J2]]
+
+    # The total angular momentum operator:
+    Fx = Ix + Jx
+    Fy = Iy + Jy
+    Fz = Iz + Jz
     F2 = Fx @ Fx + Fy @ Fy + Fz @ Fz
-    return Fx, Fy, Fz, F2, nIJ, statesIJ, basisvecsIJ
 
-def ClebschGordan(I, m_I, J, m_J, F, m_F):
-    """return the Clebsch-Gordan coeffienct <I, m_I, J, m_J | F, m_F>"""
-    if m_F != m_I + m_J:
-        return 0
-    return (-1) ** (I - J + m_F) * sqrt(2 * F + 1) * Wigner3j(I, J, F, m_I, m_J, -m_F)
+    return (Ix, Iy, Iz, I2), (Jx, Jy, Jz, J2), (Fx, Fy, Fz, F2)
 
-def U_CG(I, J):
-    """Construct the unitary of Clebsch-Gordan coefficients that transforms a
-    vector from the |m_I, m_J> basis into the |F, m_F> basis for a given I and
-    J. Return the matrix, a list of (F, m_F) tuples of quantum numers and a
-    list of basis vectors in the (F, m_F) basis that they correspond to."""
-    n_mI = int(round(2 * I + 1))
-    n_mJ = int(round(2 * J + 1))
-    mIlist = linspace(I, -I, n_mI)
-    mJlist = linspace(J, -J, n_mJ)
-    mImJlist = outer(mIlist, mJlist)
-    n_F = 1 + I + J - abs(I - J)
-    Flist = linspace(I + J, abs(I - J), n_F)
-    FmFlist = []
-    for F in Flist:
-        n_mF = int(round(2 * F + 1))
-        for mF in linspace(F, -F, n_mF):
-            FmFlist.append((F, mF))
-    U = np.zeros((n_mI * n_mJ, n_mI * n_mJ))
-    for i, (mI, mJ) in enumerate(mImJlist):
-        for j, (F, mF) in enumerate(FmFlist):
-            U[i, j] = ClebschGordan(I, mI, J, mJ, F, mF)
-    basisvecsFmF = [vec for vec in identity(n_mI * n_mJ)]
-    return U, FmFlist, basisvecsFmF
 
 class AtomicState(object):
-    
-    def __init__(self, I, J, gI, gJ, Ahfs, Bhfs=0, Bmax_crossings=500e-4, nB_crossings=5000):
+    def __init__(
+        self, I, J, gI, gJ, Ahfs, Bhfs=0, Bmax_crossings=500e-4, nB_crossings=5000
+    ):
         self.I = I
         self.J = J
         self.Bmax_crossings = Bmax_crossings
         self.nB_crossings = nB_crossings
-        Ix, Iy, Iz, I2, nI, statesI, basisvecsI = angular_momentum_operators(I)
-        Jx, Jy, Jz, J2, nJ, statesJ, basisvecsJ = angular_momentum_operators(J)  
-        self.Fx, self.Fy, self.Fz, F2, nIJ, statesIJ, basisvecsIJ = angular_momentum_product_space(I,J)
+        I_ops, J_ops, F_ops = angular_momentum_product_space(I, J)
+        self.Ix, self.Iy, self.Iz, self.I2 = I_ops
+        self.Jx, self.Jy, self.Jz, self.J2 = J_ops
+        self.Fx, self.Fy, self.Fz, self.F2 = F_ops
+        self.basis_vectors = make_FmF_basis(I, J)
+
+        # Identity matrix in the F, mF basis:
+        II = np.identity(_int((2 * I + 1) * (2 * I + 1)))
+
         # I dot J in units of hbar**2:
-        sIsJ = (kron(Ix, Jx) + kron(Iy, Jy) + kron(Iz, Jz)) / hbar ** 2
-        self.H_hfs = Ahfs * sIsJ
+        rIJ = (self.Ix @ self.Jx + self.Iy @ self.Jy + self.Iz @ self.Jz) / hbar ** 2
+        self.H_hfs = Ahfs * rIJ
         if Bhfs != 0:
             # When Bhfs is zero, this term has a division by zero that doesn't get
             # caught. Subsequently multiplying by zero just turns the Infs into Nans. So
             # to avoid getting a H_hfs full of NaNs, we have to skip over this term when
             # it doesn't apply.
-            numerator = (3 * sIsJ @ sIsJ + 3 / 2 * sIsJ - I * (I + 1) * J * (J + 1) * identity(nIJ))
+            numerator = 3 * rIJ @ rIJ + 3 / 2 * rIJ - I * (I + 1) * J * (J + 1) * II
             denominator = 2 * I * (2 * I - 1) * J * (2 * J - 1)
             self.H_hfs += Bhfs * numerator / denominator
-                                 
+
         # The following assumes that the sign convention is followed in
         # which gI has a negative sign and gJ a positive one:
-        self.mu_x = -(gI*kron(Ix,identity(nJ)) + gJ*kron(identity(nI),Jx)) * mu_B / hbar
-        self.mu_y = -(gI*kron(Iy,identity(nJ)) + gJ*kron(identity(nI),Jy)) * mu_B / hbar     
-        self.mu_z = -(gI*kron(Iz,identity(nJ)) + gJ*kron(identity(nI),Jz)) * mu_B / hbar
-        evalsF2, evecsF2, S = eigensystem(F2)
-        self.flist = sorted(map(find_f, evalsF2), reverse=True)
-        self.mlist = []
-        for F in sorted(set(self.flist), reverse=True):
-            self.mlist.extend([F - n for n in range(int(round(2*F+1)))])
-        self.fingerprint = hex(hash((I,J,gI,gJ,Ahfs,Bhfs,Bmax_crossings,nB_crossings)) + sys.maxsize + 1)[2:]
-        try:
-            with open('crossings_'+self.fingerprint+'.pickle', 'rb') as f:
-                self.crossings = pickle.load(f)
-                self.crossings_found = True
-        except IOError:
-            self.crossings_found = False
-            self.crossings = []
+        self.mu_x = -(gI * self.Ix + gJ * self.Jx) * mu_B / hbar
+        self.mu_y = -(gI * self.Iy + gJ * self.Jy) * mu_B / hbar
+        self.mu_z = -(gI * self.Iz + gJ * self.Jz) * mu_B / hbar
 
-    def Htot(self, B_z):
-        return self.H_hfs - self.mu_z * B_z
-        
-    def find_crossings(self):
-        B_range = linspace(0,self.Bmax_crossings,self.nB_crossings) 
-        evals = [sorted(real(eigensystem(self.Htot(B_range[0]))[0])),
-                 sorted(real(eigensystem(self.Htot(B_range[1]))[0]))]
-        self.crossings = []
-        self.crossingy = []
-        self.crossingx = []
-        for Bz in B_range[2:]:
-            predicted = 2*array(evals[-1]) - array(evals[-2])
-            new_evals = array(sorted(eigensystem(self.Htot(Bz))[0]))
-            for field, (a,b) in self.crossings:
+        # Lists of F and mF quantum numbers at small field for the states, sorted by
+        # energy from lowest to highest. These are used to identify the states that come
+        # back from numerical diagonalisation.
+        _, U = sorted_eigh(self.Htot(0))
+        evecs = Hconj(U)
+        E_Fz = matrixel(evecs, self.Fz, evecs).real
+        E_F2 = matrixel(evecs, self.F2, evecs).real
+        self._mF_by_energy = find_mF(E_Fz)
+        self._F_by_energy = find_F(E_F2)
+
+        # A key to store cached zeeman crossings so that we don't have to recompute them
+        # all the time. They will be stored in the system temporary directory.
+        cache_key = repr((I, J, gI, gJ, Ahfs, Bhfs, Bmax_crossings, nB_crossings))
+        cache_file = os.path.join(gettempdir(), 'alkali_zeeman_crossings_cache')
+        with shelve.open(cache_file) as cache:
+            if cache_key not in cache:
+                cache[cache_key] = self._find_crossings()
+            self.crossings = cache[cache_key]
+
+    def Htot(self, Bz):
+        """Return total Hamiltonian for the given z magnetic field. if Bz is an array,
+        the returned array will have the matrix dimensions as the last two dimensions,
+        and B_z's dimensions as the initial dimensions."""
+        Bz = np.array(Bz, dtype=float)
+        # Degenerate eigenstates at zero field make it impossible to calculate
+        # simultaneous eigenstates of both Htot and Fz. We'll lift that degeneracy just
+        # a little bit. This only affects the accuracy of the energy eigenvalues in the
+        # 13th decimal place -- far beyond the accuracy of any of these calculations.
+        Bz[Bz < 1e-15] = 1e-15
+        return self.H_hfs - self.mu_z * Bz[..., np.newaxis, np.newaxis]
+
+    def _find_crossings(self):
+        B_range = np.linspace(0, self.Bmax_crossings, self.nB_crossings)
+        evals = [
+            sorted(np.linalg.eigh(self.Htot(B_range[0]))[0]),
+            sorted(np.linalg.eigh(self.Htot(B_range[1]))[0]),
+        ]
+        crossings = []
+        from tqdm import tqdm
+
+        for Bz in tqdm(B_range[2:]):
+            predicted = 2 * np.array(evals[-1]) - np.array(evals[-2])
+            new_evals = np.array(sorted(np.linalg.eigh(self.Htot(Bz))[0]))
+            for field, (a, b) in crossings:
                 new_evals[a], new_evals[b] = new_evals[b], new_evals[a]
             prediction_failures = []
             for i, val in enumerate(new_evals):
@@ -234,84 +351,58 @@ class AtomicState(object):
                 if not bestmatch == abs(val - predicted[i]):
                     prediction_failures.append(i)
             if len(prediction_failures) == 2:
-                self.crossings.append((Bz-0.5*(B_range[1]-B_range[0]), prediction_failures))
-                a,b = prediction_failures
-                self.crossingx.extend([Bz,Bz])
-                self.crossingy.extend([new_evals[a], new_evals[b]])
+                crossings.append(
+                    (Bz - 0.5 * (B_range[1] - B_range[0]), prediction_failures)
+                )
+                a, b = prediction_failures
                 new_evals[a], new_evals[b] = new_evals[b], new_evals[a]
-            evals.append(new_evals)  
-            self.crossings_found = True
-            pickle.dump(self.crossings,open('crossings_'+self.fingerprint+'.pickle','wb'))
-            
-    def energy_eigenstates(self, Bz):
-        if not self.crossings_found:
-            self.find_crossings()
-        try:
-            results = []
-            for B in Bz:
-                results.append(self.energy_eigenstates(B))
-            vals, alphalist, mlist, evecs = zip(*results)
-            vals = tuple(array(vals).transpose())
-            evecs = tuple(array(evecs).transpose())
-            return vals, alphalist[0], mlist[0], evecs
-        except TypeError:
-            # Object is not iterable, proceed assuming its a single number:
-            pass
-        if Bz == 0:
-            # Degenerate eigenstates at zero field make it impossible to calculate
-            # simultaneous eigenstates of both Htot and Fz. We'll lift that degeneracy
-            # just a little bit. This only affects the accuracy of the energy
-            # eigenvalues in the 13th decimal place -- far beyond the accuracy of any of
-            # these calculations.
-            Bz = 1e-15
-        evals, evecs, _ = eigensystem(self.Htot(Bz))
-        mlist = [find_m((evec.conj() @ self.Fz @ evec).real) for evec in evecs]
-        # Sort by energy eigenvalues. m and the eigenvectors are in there so that they
-        # get sorted too, though their values aren't being compared (since energies
-        # aren't degenerate -- we lifted the degeneracy).
-        sortinglist = list(zip(evals, mlist, evecs))
-        sortinglist.sort()
+            evals.append(new_evals)
+        return crossings
+
+    def _solve(self, Bz):
+        evals, U = sorted_eigh(self.Htot(Bz))
         # Now to apply some swapping to account for crossings at lower fields than we're
         # at. The states will then be sorted by the energy eigenvalues that they
         # converge to at low but nonzero field.
         for field, (a, b) in self.crossings:
-            if Bz > field:
-                sortinglist[a], sortinglist[b] = sortinglist[b], sortinglist[a]
-        # This is Python idiom for unzipping:
-        evals, mlist, evecs = zip(*sortinglist)
-        # Now here's a list of the F values that these states converge to at low field.
-        # Most people call them alpha, or gamma or something like that. They are useful
-        # for labeling the states even though they are not eigenvalues of anything.
-        alphalist = sorted(self.flist)
-        return evals, alphalist, mlist, evecs
+            s = Bz > field
+            evals[s, a], evals[s, b] = evals[s, b], evals[s, a]
+            U[s, :, a], U[s, :, b] = U[s, :, b], U[s, :, a]
+        return evals, U
+
+    def energy_eigenstates(self, Bz):
+        evals, U = self._solve(Bz)
+        evecs = Hconj(U)
+        results = {}
+        for i, (F, mF) in enumerate(zip(self._F_by_energy, self._mF_by_energy)):
+            results[F, mF] = (evals[..., i], evecs[..., i, :])
+        return results
 
     @lru_cache()
-    def get_transitions(self, Bz):
-        energies, alphalist, mlist, _ = self.energy_eigenstates(Bz)
-        states = list(zip(energies, alphalist, mlist))
-        state_pairs = outer(states, states)
+    def transitions(self, Bz):
+        states = self.energy_eigenstates(Bz)
         transitions = {}
-        for (E, alpha, m), (Eprime, alphaprime, mprime) in state_pairs:
-            if abs(mprime - m) <= 1 and not (m == mprime and alpha == alphaprime):
-                omega = (Eprime - E) / hbar
-                transitions[(alpha, m), (alphaprime, mprime)] = omega
+        for (alpha, mF), E in states.items():
+            for (alphaprime, mFprime), Eprime in states.items():
+                if abs(mFprime - mF) <= 1 and (alpha, mF) != (alphaprime, mFprime):
+                    omega = (Eprime - E) / hbar
+                    transitions[(alpha, mF), (alphaprime, mFprime)] = np.abs(omega)
         return transitions
 
-    def rf_transition_matrix_element(self, alpha, m, alphaprime, mprime, direction, Bz):
-        evals, alphalist, mlist, evecs = self.energy_eigenstates(Bz)
-        for this_alpha, this_m, vec in zip(alphalist, mlist, evecs):
-            if this_alpha == alpha and this_m == m:
-                initial_state = vec[:]
-            if this_alpha == alphaprime and this_m == mprime:
-                final_state = vec[:]
+    @lru_cache()
+    def rf_transition_matrix_element(
+        self, alpha, mF, alphaprime, mFprime, direction, Bz
+    ):
+        states = self.energy_eigenstates(Bz)
+        _, initial_state = states[alpha, mF]
+        _, final_state = states[alphaprime, mFprime]
         magnetic_moments = {'x': self.mu_x, 'y': self.mu_y, 'z': self.mu_z}
         mu = magnetic_moments[direction]
-        return final_state.conj() @ mu @ initial_state
-        
+        return matrixel(final_state, mu, initial_state)
+
 
 class AtomicLine(object):
-    
-    def __init__(self,groundstate,excited_state,omega_0,lifetime):
+    def __init__(self, groundstate, excited_state, omega_0, lifetime):
         self.groundstate = groundstate
         self.excited_state = excited_state
         self.J = groundstate.J
@@ -319,227 +410,98 @@ class AtomicLine(object):
         self.I = groundstate.I
         self.omega_0 = omega_0
         self.lifetime = lifetime
-        self.linewidth = 1/lifetime
-    
-        ground_energies, alphalist, mlist, evecs = self.groundstate.energy_eigenstates(0)
-        self.ground_sublevels = list(zip(['S%d/2'%int(2*self.J)]*len(alphalist), alphalist, mlist))
-        excited_energies, alphalist, mlist, evecs = self.excited_state.energy_eigenstates(0)
-        self.excited_sublevels = list(zip(['P%d/2'%int(2*self.Jprime)]*len(alphalist), alphalist, mlist))
-        
-        self.linewidths = array([0]*len(self.ground_sublevels) + [self.linewidth]*len(self.excited_sublevels))
-        
-    @lru_cache()
-    def get_transitions(self,Bz):
-        ground_energies, alphalist, mlist, evecs = self.groundstate.energy_eigenstates(Bz)
-        excited_energies, alphalist, mlist, evecs = self.excited_state.energy_eigenstates(Bz)
-        transitions = outer(self.ground_sublevels,self.excited_sublevels)
-        energies = outer(ground_energies,excited_energies)
-        for transition, energy_pair in zip(transitions[:],energies[:]):
-            (J,alpha,m),(Jprime,alphaprime,mprime) = transition
-            if abs(mprime-m) > 1:
-                index = transitions.index(transition)
-                del transitions[index]
-                del energies[index]
-                
-        omegas = tuple([(Eprime-E)/hbar for E, Eprime in energies])
-        result  = dict([((transition[0],transition[1]),omega) for transition, omega in zip(transitions,omegas)])
-        return result
-        
-    def transition_dipole_moment(self, J, alpha, m, Jprime, alphaprime, mprime, q, Bz):
-        if J != self.J or Jprime != self.Jprime:
-            msg = 'values of J and Jprime do not match the ground and excited state J quantum numbers'
-            raise ValueError(msg)
-        evals, alphalist, mlist, evecs = self.groundstate.energy_eigenstates(Bz)
-        for this_alpha, this_m, vec in zip(alphalist,mlist,evecs):
-            if this_alpha == alpha and this_m == m:
-                initial_state = vec[:]
-                break
-        else:
-            msg = 'initial state quantum numbers out of range'
-            raise ValueError(msg)
-                
-        evals, alphalist, mlist, evecs = self.excited_state.energy_eigenstates(Bz)
-        for this_alpha, this_m, vec in zip(alphalist,mlist,evecs):
-            if this_alpha == alphaprime and this_m == mprime:
-                final_state = vec[:]
-                break
-        else:
-            msg = 'final state quantum numbers out of range'
-            raise ValueError(msg)
-        
-        dipole_moment = 0
-        for E, F, mF, ket in zip(*self.groundstate.energy_eigenstates(0)):
-            for Eprime, Fprime, mFprime, ketprime in zip(*self.excited_state.energy_eigenstates(0)):
-                if (mF - mFprime != q) or abs(Fprime - F) > 1:
+        self.linewidth = 1 / lifetime
+        self.dipole_operator = self._make_dipole_operator()
+
+    def _make_dipole_operator(self):
+        """Construct the dipole operator e r_q = Σ |F' mF'><F' mF'|e r_q|F mF><F mF|
+        where the sum is over F, mF, F', and mF'. The matrix constructed is not square,
+        it is num_excited_states × num_groundstates. We compute three matrices, for q =
+        (-1, 0, +1)."""
+        N_ground = len(self.groundstate.basis_vectors)
+        N_excited = len(self.excited_state.basis_vectors)
+        dipole_operator = {q: np.zeros((N_excited, N_ground)) for q in [-1, 0, 1]}
+        statepairs = outer(
+            self.groundstate.basis_vectors.items(),
+            self.excited_state.basis_vectors.items(),
+        )
+        for q in [-1, 0, 1]:
+            for ((F, mF), groundvec), ((Fprime, mFprime), excited_vec) in statepairs:
+                if (mFprime - mF != q) or abs(Fprime - F) > 1:
                     continue
-                initial_projection = initial_state.conj() @ ket
-                strength = dipole_moment_zero_field(F, mF, Fprime, mFprime, q, self.J, 
-                                                   self.Jprime, self.I, self.lifetime,self.omega_0)
-                final_projection = ketprime.conj() @ final_state
-                dipole_moment += initial_projection*strength*final_projection
-        
-        return real(dipole_moment)
-            
-    def detuning(self, J, alpha, m, Jprime, alphaprime, mprime, intensity, target_scattering_rate, Bz):
-        E = sqrt(2*intensity/(c*epsilon_0))
-        dipole_moment = self.transition_dipole_moment(J, alpha, m, Jprime, alphaprime, mprime, m-mprime, Bz)
-        delta = sqrt(E**2 * dipole_moment**2 / (2*hbar**2) * (self.linewidth/(2*target_scattering_rate) - 1) - self.linewidth**2/4)
-        return delta
+                el = dipole_moment_zero_field(
+                    F,
+                    mF,
+                    Fprime,
+                    mFprime,
+                    self.J,
+                    self.Jprime,
+                    self.I,
+                    self.lifetime,
+                    self.omega_0,
+                )
+                dipole_operator[q] += el * ketbra(excited_vec, groundvec)
+        return dipole_operator
+
+    @lru_cache()
+    def transitions(self, Bz):
+        groundstates = self.groundstate.energy_eigenstates(Bz)
+        excited_states = self.excited_state.energy_eigenstates(Bz)
+        transitions = {}
+        for (alpha, mF), (E, _) in groundstates.items():
+            for (alphaprime, mFprime), (Eprime, _) in excited_states.items():
+                if abs(mFprime - mF) <= 1:
+                    omega = (Eprime - E) / hbar
+                    transitions[(alpha, mF), (alphaprime, mFprime)] = omega
+        return transitions
+
+    @lru_cache()
+    def transition_dipole_moment(self, alpha, mF, alphaprime, mFprime, Bz):
+        try:
+            dipole_operator = self.dipole_operator[mFprime - mF]
+        except KeyError:
+            raise ValueError("require mF' - mF ∊ {-1, 0, 1}")
+        _, groundstate = self.groundstate.energy_eigenstates(Bz)[alpha, mF]
+        _, excited_state = self.excited_state.energy_eigenstates(Bz)[alphaprime, mFprime]
+        return matrixel(excited_state, dipole_operator, groundstate).real
 
 
 class FineStructureLine(object):
-    def __init__(self, line1, line2):
+    def __init__(self, line1, line2, N, L, Nprime, Lprime):
+        """Wrapper around two AtomicLine objects, assumed to share a groundstate with
+        principal quantum number N and orbital angular momentum quantum number L, and
+        where the two excited states have the same Nprime, Lprime, differing only by
+        their J quantum number.  The N and L quantum numbers are used solely to label
+        the transitions returned by transitions() with an additional string NLJ, with L
+        in spectroscopic notation and J written as a fraction, i.e. 5P3/2"""
         self.line1 = line1
         self.line2 = line2
-        self.ground_sublevels = line1.ground_sublevels
-        self.excited_sublevels = line1.excited_sublevels + line2.excited_sublevels
-        self.linewidths = array([0]*len(self.ground_sublevels) + [line1.linewidth]*len(line1.excited_sublevels) + [line2.linewidth]*len(line2.excited_sublevels))
-        
-    def get_transitions(self,Bz): 
+        self.groundstate_label = _make_state_label(N, L, line1.groundstate.J)
+        self.excited_state_1_label = _make_state_label(
+            Nprime, Lprime, line1.excited_state.J
+        )
+        self.excited_state_2_label = _make_state_label(
+            Nprime, Lprime, line2.excited_state.J
+        )
+
+    def transitions(self, Bz):
         transitions = {}
-        transitions.update(self.line1.get_transitions(Bz))
-        transitions.update(self.line2.get_transitions(Bz))
+        for (initial, final), freq in self.line1.transitions(Bz).items():
+            initial = (self.groundstate_label,) + initial
+            final = (self.excited_state_1_label,) + final
+            transitions[(initial, final)] = freq
+        for (initial, final), freq in self.line2.transitions(Bz).items():
+            initial = (self.groundstate_label,) + initial
+            final = (self.excited_state_2_label,) + final
+            transitions[(initial, final)] = freq
         return transitions
-        
-    def transition_dipole_moment(self, J, alpha, m, Jprime, alphaprime, mprime, q, Bz):
+
+    def transition_dipole_moment(self, J, alpha, m, Jprime, alphaprime, mprime, Bz):
         if Jprime - J == self.line1.Jprime - self.line1.J:
-            return self.line1.transition_dipole_moment(J, alpha, m, Jprime, alphaprime, mprime, q, Bz)
+            return self.line1.transition_dipole_moment(alpha, m, alphaprime, mprime, Bz)
         elif Jprime - J == self.line2.Jprime - self.line2.J:
-            return self.line2.transition_dipole_moment(J, alpha, m, Jprime, alphaprime, mprime, q, Bz)
+            return self.line2.transition_dipole_moment(alpha, m, alphaprime, mprime, Bz)
         else:
-            raise ValueError('Given J and Jprime do not match any of this line\'s transitions.')
-
-
-class Laser(object):
-    def __init__(self, omega, I, polarisation, line):
-        self.omega = omega
-        self.polarisation = polarisation
-        self.q = {'sigma plus': -1, 'sigma minus': 1, 'pi': 0}[polarisation]
-        self.line = line
-        self.deltaJ = line.Jprime - line.J
-        
-        if not callable(I):
-            self.I = lambda t: I
-        else:
-            self.I = I 
-                 
-                  
-class Simulation(object):
-    
-    def __init__(self,atomic_line,Bz,lasers, dv_dt, delta_v):
-        self.atomic_line = atomic_line
-        states = atomic_line.ground_sublevels + atomic_line.excited_sublevels
-        psi = zeros(len(states),dtype=complex)
-        x = 0
-        v = 0
-        t = 0
-        
-        self.dipole_moments = zeros((len(states),len(states)))
-        field_amplitude_mask = [zeros((len(states),len(states))) for laser in lasers]
-        detunings= [zeros((len(states),len(states))) for laser in lasers]
-        
-        self.stopping = False
-
-        for ((J,alpha,m),(Jprime,alphaprime,mprime)), omega in atomic_line.get_transitions(Bz).items():
-            i = states.index((J, alpha, m))
-            j = states.index((Jprime, alphaprime, mprime))
-            self.dipole_moments[i,j] = self.dipole_moments[j,i] = atomic_line.transition_dipole_moment(int(J[1])/2,alpha, m, int(Jprime[1])/2,alphaprime, mprime, q=m-mprime, Bz=Bz)
-            for k, laser in enumerate(lasers):
-                if m-mprime == laser.q and int(Jprime[1])/2 - int(J[1])/2 == laser.deltaJ:
-                    print(k, states[i], states[j])
-                    field_amplitude_mask[k][i,j] = field_amplitude_mask[k][j,i] = 1
-                    detunings[k][i,j] = laser.omega - omega
-                    detunings[k][j,i] = omega - laser.omega # This is actually -1 times the detuning.
-             
-        def dpsi_dt(x,t,psi):
-            coefficients = zeros((len(psi),len(psi)),dtype=complex)
-            for i, laser in enumerate(lasers):
-                coefficients += sqrt(2*laser.I(x)/(c*epsilon_0))*field_amplitude_mask[i]*exp(1j*detunings[i]*t)
-            result = 1j/(2*hbar)*dot(coefficients*self.dipole_moments,psi)
-            return result
-            
-        self.states = states
-        self.psi = psi
-        self.x = x
-        self.v = v
-        self.t = t
-        self.dpsi_dt = dpsi_dt
-        self.dv_dt = dv_dt
-        self.delta_v = delta_v
-        self.sum_of_decay_probs = 0
-        
-    def spontaneous_emission(self,i,t):
-        individual_decay_probabilities = abs(self.psi)**2 * self.atomic_line.linewidths/(2*pi)*self.dt
-        overall_decay_probability = sum(individual_decay_probabilities)
-        self.sum_of_decay_probs += overall_decay_probability
-        if rand() < overall_decay_probability:
-            print('emission!')
-            #Pick an excited state:
-            excited_state_index = searchsorted(cumsum(individual_decay_probabilities/overall_decay_probability), rand())
-            # Randomly pick a groundstate, weighted by their coupling
-            # strengths to the chosen excited state:
-            dipole_moments = self.dipole_moments[excited_state_index,:]
-            relative_coupling_strengths = dipole_moments**2/dot(dipole_moments,dipole_moments)
-            groundstate_index = searchsorted(cumsum(relative_coupling_strengths),random())
-            # Set everything to zero:
-            self.psi[:] = 0
-            # Put all the population in the chosen groundstate:
-            self.psi[groundstate_index] = 1   
-            # Give the atom a photon recoil in a random direction:
-            self.v += (random_integers(0,1)*2 - 1)*self.delta_v
-            return excited_state_index, groundstate_index
-    
-    def stop(self):
-        self.stopping = True
-                            
-    def run(self, dt, triggers={}, repeated_triggers={},emission_trigger=None):
-        self.dt = dt
-        t = self.t
-        i = 0
-        while True:
-            if self.stopping:
-                self.stopping = False
-                break
-            if isnan(self.psi).any() or isinf(self.psi).any() or \
-               isnan(self.x) or isinf(self.x) or \
-               isnan(self.v) or isinf(self.v) :
-                raise OverflowError('It exploded :(')
-                
-            k1_psi = self.dpsi_dt(self.x, t, self.psi)
-            k1_v = self.dv_dt(self.x, self.psi)
-            k1_x = self.v
-            
-            k2_psi = self.dpsi_dt(self.x + 0.5*dt*k1_x, t + 0.5*dt, self.psi + 0.5*dt*k1_psi)
-            k2_v = self.dv_dt(self.x + 0.5*dt*k1_x, self.psi + 0.5*dt*k1_psi)
-            k2_x = self.v + 0.5*dt*k1_v
-            
-            k3_psi = self.dpsi_dt(self.x + 0.5*dt*k2_x, t + 0.5*dt, self.psi + 0.5*dt*k2_psi)
-            k3_v = self.dv_dt(self.x + 0.5*dt*k2_x, self.psi + 0.5*dt*k2_psi)
-            k3_x = self.v + 0.5*dt*k2_v
-            
-            k4_psi = self.dpsi_dt(self.x + dt*k3_x, t + dt, self.psi + dt*k3_psi)
-            k4_v = self.dv_dt(self.x + dt*k3_x, self.psi + dt*k3_psi)
-            k4_x = self.v + dt*k3_v
-            
-            self.psi += dt/6*(k1_psi + 2*k2_psi + 2*k3_psi + k4_psi) 
-            self.v += dt/6*(k1_v + 2*k2_v + 2*k3_v + k4_v) 
-            self.x += dt/6*(k1_x + 2*k2_x + 2*k3_x + k4_x) 
-            
-            emission = self.spontaneous_emission(i,t)
-            if emission and emission_trigger:
-                emission_trigger(i,t,*emission)
-            
-            for trigger in triggers:
-                if i == triggers:
-                    triggers[i](i,t,self.psi,x,v)  
-                             
-            for trigger in repeated_triggers:
-                if i%trigger == 0:
-                    repeated_triggers[trigger](i/trigger,t,self.psi,self.x,self.v) 
-                    
-            t += dt
-            i += 1
-
- 
-
-
+            raise ValueError(
+                'Given J and Jprime do not match any of this line\'s transitions.'
+            )
