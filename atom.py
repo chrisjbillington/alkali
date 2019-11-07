@@ -391,8 +391,8 @@ class AtomicState(object):
     def transitions(self, Bz):
         states = self.energy_eigenstates(Bz)
         transitions = {}
-        for (alpha, mF), E in states.items():
-            for (alphaprime, mFprime), Eprime in states.items():
+        for (alpha, mF), (E, _) in states.items():
+            for (alphaprime, mFprime), (Eprime, _) in states.items():
                 if abs(mFprime - mF) <= 1 and (alpha, mF) != (alphaprime, mFprime):
                     omega = (Eprime - E) / hbar
                     transitions[(alpha, mF), (alphaprime, mFprime)] = np.abs(omega)
