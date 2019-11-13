@@ -1,8 +1,10 @@
 import os
 from tempfile import gettempdir
 import numpy as np
-from .wigner import Wigner3j, Wigner6j
+from .wigner import Wigner3j
 import shelve
+from tqdm import tqdm
+import itertools
 
 pi = np.pi
 hbar = 1.054571628e-34
@@ -16,75 +18,25 @@ mu_B = 9.27400915e-24
 gs = 2.0023193043622
 
 
-def make_key(obj):
-    """ For an arbitrarily nested list, tuple, set, or dict, convert all numpy arrays to
-    tuples of their data and metadata, convert all lists and dicts to tuples, and store
-    every item alongside its type. This creates an object that can be used as a
-    dictionary key to represent the original types and data of the nested objects that
-    might otherwise not be able to be used as a dictionary key due to not being
-    hashable."""
-    if isinstance(obj, (list, tuple)):
-        return tuple(make_key(item) for item in obj)
-    elif isinstance(obj, set):
-        return set(make_key(item) for item in obj)
-    elif isinstance(obj, dict):
-        return tuple((key, make_key(value)) for key, value in obj.items())
-    elif isinstance(obj, np.ndarray):
-        return obj.tobytes(), obj.dtype, obj.shape
-    else:
-        return type(obj), obj
-
-
-def lru_cache(maxsize=128):
-    """Decorator to cache up to `maxsize` most recent results of a function call. Custom
-    implementation instead of using `functools.lru_cache()`, so that we can create
-    dictionary keys for unhashable types like numpy arrays, which do not work with
-    `functools.lru_cache()`."""
-
-    def decorator(func):
-        import functools, collections
-
-        cache = collections.OrderedDict()
-
-        @functools.wraps(func)
-        def wrapped(*args, **kwargs):
-            cache_key = make_key((args, kwargs))
-            try:
-                result = cache[cache_key]
-            except KeyError:
-                try:
-                    result = cache[cache_key] = func(*args, **kwargs)
-                except Exception as e:
-                    # We don't want the KeyError in the exception:
-                    raise e from None
-            cache.move_to_end(cache_key)
-            while len(cache) > maxsize:
-                cache.popitem(last=False)
-            return result
-
-        return wrapped
-
-    return decorator
-
-
-def get_gF(F, I, J, gI, gJ):
+def get_gF(F, I, J, gJ, gI):
+    """Compute the effective low-field lande-g factor for a state of total angular
+    momentum quantum number F, electronic and nuclear angular momentum quantum numbers J
+    and I, and electronic and nuclear Lande g factors gJ and gI"""
     term1 = gJ * (F * (F + 1) - I * (I + 1) + J * (J + 1)) / (2 * F * (F + 1))
     term2 = gI * (F * (F + 1) + I * (I + 1) - J * (J + 1)) / (2 * F * (F + 1))
     return term1 + term2
 
 
-def outer(list_a, list_b):
-    outer_ab = []
-    for a in list_a:
-        for b in list_b:
-            outer_ab.append((a, b))
-    return outer_ab
+def outer(a, b):
+    return list(itertools.product(a, b))
 
 
 def _int(x):
     """Round x to an integer, returning an int dtype"""
     x = np.round(np.array(x))
-    return np.array(x, dtype=int)
+    result = np.array(x, dtype=int)
+    assert np.all(abs(x - result) < 0.05)
+    return result
 
 
 def _halfint(x):
@@ -94,9 +46,25 @@ def _halfint(x):
     twice_x = np.round(2 * x)
     # Halve and decide whether to return as float or int (array)
     if np.any(twice_x % 2):
-        return twice_x / 2
+        result = twice_x / 2
     else:
-        return np.array(twice_x // 2, dtype=int)
+        result = np.array(twice_x // 2, dtype=int)
+    assert np.all(abs(x - result) < 0.05)
+    return result
+
+
+def _cleanarrays(scale, *arrs):
+    """For arrays that have been computed numerically, set elements less than 10 ×
+    machine epsilon times `scale` to zero. This essentially rounds to exactly zero
+    elements that would be zero if computed exactly, but are not due to floating point
+    rounding error in cancellations. This should only be done when it is known that all
+    nonzero elements will be above this threshold. Operates on the arrays in-place and
+    returns None"""
+    threshold = 10 * np.finfo(float).eps * scale
+    for arr in arrs:
+        arr.real[np.abs(arr.real) < threshold] = 0
+        if arr.dtype == np.complex:
+            arr.imag[np.abs(arr.imag) < threshold] = 0
 
 
 def _make_state_label(N, L, J):
@@ -149,77 +117,57 @@ def sorted_eigh(A):
     return evals, U
 
 
-def ClebschGordan(F, mF, I, J, mI, mJ):
-    """return the Clebsch-Gordan coeffienct <F, mF|I, J, mI, mJ>"""
-    if mF != mI + mJ:
-        return 0
-    # Work around numpy issue https://github.com/numpy/numpy/issues/8917, Can't raise
-    # integers to negative integer powers if the power is a numpy integer:
-    F, mF, I, J, mI, mJ = [float(x) for x in (F, mF, I, J, mI, mJ)]
-    return (-1) ** int(I - J + mF) * np.sqrt(2 * F + 1) * Wigner3j(I, J, F, mI, mJ, -mF)
-
-
-def dipole_moment_zero_field(F, mF, Fprime, mFprime, J, Jprime, I, lifetime, omega_0):
-    """ Calculate the transition dipole moment in SI units (Coulomb metres) for given
-    initial and final F, mF states of a hydrogenic atom. Also required are the initial
-    and final J's, the nuclear spin, and the lifetime and angular frequency of the
-    transition. This calculation assumes the primed quantum numbers correspond to the
-    excited state, so it is computing the dipole transition moment from ground to
-    excited state."""
-    # Work around numpy issue https://github.com/numpy/numpy/issues/8917, Can't raise
-    # integers to negative integer powers if the power is a numpy integer:
-    F, mF, Fprime, mFprime, J, Jprime, I = [
-        float(x) for x in (F, mF, Fprime, mFprime, J, Jprime, I)
-    ]
-    # Think there is a factor of sqrt((2J+1)/(2J'-1)) or similar missing from this
-    # expression? Think again - it cancels out when you write the ground -> excited
-    # reduced dipole moment in terms of the excited -> ground one that is derived from
-    # the linewidth:
-    reduced_dipole_J = (-1) ** (Jprime - J) * np.sqrt(
-        3 * pi * epsilon_0 * hbar * c ** 3 / (lifetime * omega_0 ** 3)
-    )
-    reduced_dipole_F = (
-        (-1) ** (F + Jprime + 1 + I)
-        * np.sqrt((2 * F + 1) * (2 * Jprime + 1))
-        * Wigner6j(Jprime, J, 1, F, Fprime, I)
-        * reduced_dipole_J
-    )
-    return ClebschGordan(Fprime, mFprime, F, 1, mF, mFprime - mF) * reduced_dipole_F
-
-def make_mImJ_basis(I, J):
-    """Construct a dict mapping (mI, mJ) quantum numbers to basis vectors in the
-    convention used by this module in which the |mI, mJ> basis is ordered first by mI
-    from highest to lowest; basis states with equal mI are then ordered by mJ from
-    highest to lowest."""
-    mImJ = outer(_halfint(np.arange(I, -I - 1, -1)), _halfint(np.arange(J, -J - 1, -1)))
-    return {nums: vec for nums, vec in zip(mImJ, np.identity(len(mImJ)))}
-
-
-def make_FmF_basis(I, J):
-    """Construct a dict mapping (F, mF) quantum numbers to basis vectors in the
-    convention used by this module in which the |F, mF> basis is ordered first by F from
-    highest to lowest; basis states with equal F are then ordered by mF from highest to
+def make_J_basis(J):
+    """Construct a dict mapping mJ quantum numbers to basis vectors in the convention
+    used by this module in which the |mJ> basis is ordered by mJ from highest to
     lowest."""
+    mJ = _halfint(np.arange(J, -J - 1, -1))
+    return {num: vec for num, vec in zip(mJ, np.identity(len(mJ)))}
+
+
+def make_mJmI_basis(J, I):
+    """Construct a dict mapping (mJ, mI) quantum numbers to basis vectors in the
+    convention used by this module in which the |mJ, mI> basis is ordered first by mJ
+    from highest to lowest; basis states with equal mJ are then ordered by mI from
+    highest to lowest."""
+    mJmI = outer(_halfint(np.arange(J, -J - 1, -1)), _halfint(np.arange(I, -I - 1, -1)))
+    return {nums: vec for nums, vec in zip(mJmI, np.identity(len(mJmI)))}
+
+
+def make_FmF_basis(J, I):
+    """Construct a dict mapping (F, mF) quantum numbers corresponding to coupled spins J
+    and I to basis vectors in the convention used by this module in which the |F, mF>
+    basis is ordered first by F from highest to lowest; basis states with equal F are
+    then ordered by mF from highest to lowest."""
     FmF = [
         (F, mF)
-        for F in _halfint(np.arange(I + J, abs(I - J) - 1, -1))
+        for F in _halfint(np.arange(J + I, abs(J - I) - 1, -1))
         for mF in _halfint(np.arange(F, -F - 1, -1))
     ]
     return {nums: vec for nums, vec in zip(FmF, np.identity(len(FmF)))}
 
 
-def U_CG(I, J):
+def ClebschGordan(j, m, j1, m1, j2, m2):
+    """return the Clebsch-Gordan coeffienct <j, m|j1, m1; j2, m2>"""
+    if m != m1 + m2:
+        return 0
+    # Workaround numpy issue https://github.com/numpy/numpy/issues/8917, Can't raise
+    # integers to negative integer powers if the power is a numpy integer:
+    j, m, j1, m1, j2, m2 = [float(x) for x in (j, m, j1, m1, j2, m2)]
+    return (-1) ** (j1 - j2 + m) * np.sqrt(2 * j + 1) * Wigner3j(j1, j2, j, m1, m2, -m)
+
+
+def U_CG(J, I):
     """Construct the unitary of Clebsch-Gordan coefficients that transforms a vector
-    from the |m_I, m_J> basis into the |F, m_F> basis for a given I and J. The
-    convention used for ordering the basis vectors is as described by make_mImJ_basis()
-    and make_FmF_basis()."""
-    mImJ = make_mImJ_basis(I, J)
-    FmF = make_FmF_basis(I, J)
-    U = np.zeros((len(FmF), len(FmF)))
-    for i, (F, mF) in enumerate(FmF):
-        for j, (mI, mJ) in enumerate(mImJ):
-            U[i, j] = ClebschGordan(F, mF, I, J, mI, mJ)
-    return U
+    from the |mJ, mI> basis into the |F, mF> basis for a given J and I. The convention
+    used for ordering the basis vectors is as described by make_mJmI_basis() and
+    make_FmF_basis()."""
+    return sum(
+        ClebschGordan(F, mF, J, mJ, I, mI) * ketbra(FmFvec, mJmIvec)
+        for ((F, mF), FmFvec), ((mJ, mI), mJmIvec) in outer(
+            make_FmF_basis(J, I).items(), make_mJmI_basis(J, I).items()
+        )
+    )
 
 
 def angular_momentum_operators(J):
@@ -239,39 +187,110 @@ def angular_momentum_operators(J):
     Jy = (Jp - Jm) / 2j
     Jz = np.diag([hbar * mJ for mJ in mJlist])
     J2 = Jx @ Jx + Jy @ Jy + Jz @ Jz
+    _cleanarrays(hbar, Jx, Jy, Jz)
+    _cleanarrays(hbar**2, J2)
     return Jx, Jy, Jz, J2
 
 
-def angular_momentum_product_space(I, J):
+def angular_momentum_product_space(J, I):
     """Compute angular momentum operators for the product space of two systems with
-    total angular momentum quantum numbers I and J. Return the vector angular momentum
-    operators Î, Ĵ and F̂ = Î + Ĵ as well as Î², Ĵ² and F̂². All operators are
+    total angular momentum quantum numbers J and I. Return the vector angular momentum
+    operators Ĵ, Î and F̂ = Ĵ + Î as well as Ĵ², Î² and F̂². All operators are
     returned in the simultaneous eigenbasis of F̂z and F̂². The basis is ordered first
     by F from highest to lowest; states with equal F are then ordered by mF by highest
-    to lowest. Returns: (Ix, Iy, Iz, I2), (Jx, Jy, Jz, J2), (Fx, Fy, Fz, F2)"""
+    to lowest. Returns: (Jx, Jy, Jz, J2), (Ix, Iy, Iz, I2), (Fx, Fy, Fz, F2)"""
 
     # Operators in the individual subspaces:
-    Ix, Iy, Iz, I2 = angular_momentum_operators(I)
     Jx, Jy, Jz, J2 = angular_momentum_operators(J)
+    Ix, Iy, Iz, I2 = angular_momentum_operators(I)
 
-    # The transformation into the F, mF basis (the basis that diagonalises F2 and Fz):
-    U = U_CG(I, J)
+    # The transformation into the |F, mF> basis (the basis that diagonalises F2 and Fz):
+    U = U_CG(J, I)
 
     # Identity matrices for the subspaces
-    II_I = np.identity(_int(2 * I + 1))
     II_J = np.identity(_int(2 * J + 1))
+    II_I = np.identity(_int(2 * I + 1))
 
-    # Promote operators into the product space and transform into the F, mF basis:
-    Ix, Iy, Iz, I2 = [U @ np.kron(Ia, II_J) @ Hconj(U) for Ia in [Ix, Iy, Iz, I2]]
-    Jx, Jy, Jz, J2 = [U @ np.kron(II_I, Ja) @ Hconj(U) for Ja in [Jx, Jy, Jz, J2]]
+    # Promote operators into the J × I product space and transform into the |F, mF>
+    # basis:
+    Jx, Jy, Jz, J2 = [U @ np.kron(Ja, II_I) @ Hconj(U) for Ja in [Jx, Jy, Jz, J2]]
+    Ix, Iy, Iz, I2 = [U @ np.kron(II_J, Ia) @ Hconj(U) for Ia in [Ix, Iy, Iz, I2]]
 
     # The total angular momentum operator:
-    Fx = Ix + Jx
-    Fy = Iy + Jy
-    Fz = Iz + Jz
+    Fx = Jx + Ix
+    Fy = Jy + Iy
+    Fz = Jz + Iz
     F2 = Fx @ Fx + Fy @ Fy + Fz @ Fz
 
-    return (Ix, Iy, Iz, I2), (Jx, Jy, Jz, J2), (Fx, Fy, Fz, F2)
+    _cleanarrays(hbar, Jx, Jy, Jz, Ix, Iy, Iz, Fx, Fy, Fz)
+    _cleanarrays(hbar**2, J2, I2, F2)
+
+    return (Jx, Jy, Jz, J2), (Ix, Iy, Iz, I2), (Fx, Fy, Fz, F2)
+
+
+def reduced_dipole_moment_J(Jg, Je, omega_0, lifetime):
+    """The reduced transition dipole moment <Jg||e r||Je> for an excited state to
+    groundstate transition with electron angular momentum quantum numbers Je and Jg
+    respectively, computed from the empirically known lifetime and angular frequency of
+    the transition, with the convention that the reduced matrix element is real and
+    positive. This phase convention is arbitrary so long as one does not consider
+    transitions between multiple hyperfine excited states, in which case getting the
+    relative phases of the different reduced dipole moments becomes important. For the D
+    lines of the alkali metals, the phases of the reduced dipole moments for the two D
+    lines are the same, so this convention is correct already. To extend this code to
+    other lines where this might not be the case will require following the further
+    decompositions of the dipole operator to figure out the relative phases."""
+    return np.sqrt(
+        ((2 * Je + 1) / (2 * Jg + 1))
+        * ((3 * pi * epsilon_0 * hbar * c ** 3) / (lifetime * omega_0 ** 3))
+    )
+
+
+def dipole_operator(Jg, Je, I, omega_0, lifetime):
+    """Compute the dipole operator with elements <Fe, mFe| e r_q| Fg, mFg> for
+    transitions from a groundstate |Fg, mFg> to an excited state |Fe, mFe> via light
+    with polarisation q = (-1, 0, 1). Returns a dictionary of three matrices, one for
+    each q, each of dimension (2 Je + 1)(2 I + 1) × (2 Jg + 1)(2 I + 1). The dipole
+    operator only couples states of different J, so you can think of each matrix as one
+    of the off-diagonal blocks of a full matrix that has two blocks full of zeros on its
+    diagonal (which would not be useful to construct). These matrices are not Hermitian,
+    but since the dipole operator is a spherical tensor operator, elements of the other
+    off-diagonal block (the matrix elements for transitions from excited states to
+    groundstates) can be computed as:
+
+    <Fg, mFg| e r_q| Fe, mFe> = (-1)^q <Fe, mFe| e r_{-q}| Fg, mFg>*.
+    """
+
+    # The reduced dipole moment for excited to ground transitions
+    reduced_moment_J_e_to_g = reduced_dipole_moment_J(Jg, Je, omega_0, lifetime)
+    # The reduced dipole moment for ground to excited transitions:
+    reduced_moment_J = (
+        (-1) ** (Jg - Je)
+        * np.sqrt((2 * Jg + 1) / (2 * Je + 1))
+        * reduced_moment_J_e_to_g.conj()
+    )
+    # Identity matrix of the nuclear subspace:
+    II_I = np.identity(_int(2 * I + 1))
+    # Unitaries for going from the |mJ, mI> basis to the |F, mF> basis in ground and
+    # excited state manifolds:
+    Ue = U_CG(Je, I)
+    Ug = U_CG(Jg, I)
+    dipole_operators = {}
+    for q in [-1, 0, 1]:
+        # First we compute the <Je, me| e r_q| Jg, mg> elements of the dipole operator.
+        # Then we will transform to obtain <Fe, mFe| e r_q| Fg, mFg> elements.
+        dipole_operator_J = sum(
+            ClebschGordan(Je, me, Jg, mg, 1, q)
+            * reduced_moment_J
+            * ketbra(excited_vec, ground_vec)
+            for (me, excited_vec), (mg, ground_vec) in outer(
+                make_J_basis(Je).items(), make_J_basis(Jg).items()
+            )
+        )
+        # Bump the operator up into the J × I product space and transform into the |F,
+        # mF> basis of the ground and excited manifolds:
+        dipole_operators[q] = Ue @ np.kron(dipole_operator_J, II_I) @ Hconj(Ug)
+    return dipole_operators
 
 
 class AtomicState(object):
@@ -282,17 +301,18 @@ class AtomicState(object):
         self.J = J
         self.Bmax_crossings = Bmax_crossings
         self.nB_crossings = nB_crossings
-        I_ops, J_ops, F_ops = angular_momentum_product_space(I, J)
-        self.Ix, self.Iy, self.Iz, self.I2 = I_ops
+        J_ops, I_ops, F_ops = angular_momentum_product_space(J, I)
         self.Jx, self.Jy, self.Jz, self.J2 = J_ops
+        self.Ix, self.Iy, self.Iz, self.I2 = I_ops
         self.Fx, self.Fy, self.Fz, self.F2 = F_ops
-        self.basis_vectors = make_FmF_basis(I, J)
+        self.basis_vectors = make_FmF_basis(J, I)
 
-        # Identity matrix in the F, mF basis:
+        # Identity matrix in the |F, mF> basis:
         II = np.identity(len(self.basis_vectors))
 
         # I dot J in units of hbar**2:
         rIJ = (self.Ix @ self.Jx + self.Iy @ self.Jy + self.Iz @ self.Jz) / hbar ** 2
+        _cleanarrays(1, rIJ)
         self.H_hfs = Ahfs * rIJ
         if Bhfs != 0:
             # When Bhfs is zero, this term has a division by zero that doesn't get
@@ -336,7 +356,7 @@ class AtomicState(object):
         # Degenerate eigenstates at zero field make it impossible to calculate
         # simultaneous eigenstates of both Htot and Fz. We'll lift that degeneracy just
         # a little bit. This only affects the accuracy of the energy eigenvalues in the
-        # 13th decimal place -- far beyond the accuracy of any of these calculations.
+        # 12th decimal place -- far beyond the accuracy of any of these calculations.
         Bz[Bz < 1e-15] = 1e-15
         return self.H_hfs - self.mu_z * Bz[..., np.newaxis, np.newaxis]
 
@@ -347,12 +367,10 @@ class AtomicState(object):
             sorted(np.linalg.eigh(self.Htot(B_range[1]))[0]),
         ]
         crossings = []
-        from tqdm import tqdm
-
         for Bz in tqdm(B_range[2:]):
             predicted = 2 * np.array(evals[-1]) - np.array(evals[-2])
             new_evals = np.array(sorted(np.linalg.eigh(self.Htot(Bz))[0]))
-            for field, (a, b) in crossings:
+            for _, (a, b) in crossings:
                 new_evals[a], new_evals[b] = new_evals[b], new_evals[a]
             prediction_failures = []
             for i, val in enumerate(new_evals):
@@ -383,11 +401,15 @@ class AtomicState(object):
         evals, U = self._solve(Bz)
         evecs = Hconj(U)
         results = {}
-        for i, (F, mF) in enumerate(zip(self._F_by_energy, self._mF_by_energy)):
-            results[F, mF] = (evals[..., i], evecs[..., i, :])
+        for i, (alpha, mF) in enumerate(zip(self._F_by_energy, self._mF_by_energy)):
+            # Impose phase convention that each eigenvector's inner product with the
+            # corresponding zero field eigenvector is real and positive:
+            evec = evecs[..., i, :]
+            proj = braket(self.basis_vectors[alpha, mF], evec)[..., np.newaxis]
+            evec /= proj / np.abs(proj ** 2)
+            results[alpha, mF] = (evals[..., i], evec)
         return results
 
-    @lru_cache()
     def transitions(self, Bz):
         states = self.energy_eigenstates(Bz)
         transitions = {}
@@ -398,7 +420,6 @@ class AtomicState(object):
                     transitions[(alpha, mF), (alphaprime, mFprime)] = np.abs(omega)
         return transitions
 
-    @lru_cache()
     def rf_transition_matrix_element(
         self, alpha, mF, alphaprime, mFprime, direction, Bz
     ):
@@ -414,45 +435,16 @@ class AtomicLine(object):
     def __init__(self, groundstate, excited_state, omega_0, lifetime):
         self.groundstate = groundstate
         self.excited_state = excited_state
-        self.J = groundstate.J
-        self.Jprime = excited_state.J
+        self.Jg = groundstate.J
+        self.Je = excited_state.J
         self.I = groundstate.I
         self.omega_0 = omega_0
         self.lifetime = lifetime
         self.linewidth = 1 / lifetime
-        self.dipole_operator = self._make_dipole_operator()
-
-    def _make_dipole_operator(self):
-        """Construct the dipole operator e r_q = Σ |F' mF'><F' mF'|e r_q|F mF><F mF|
-        where the sum is over F, mF, F', and mF'. The matrix constructed is not square,
-        it is num_excited_states × num_groundstates. We compute three matrices, for q =
-        (-1, 0, +1)."""
-        N_ground = len(self.groundstate.basis_vectors)
-        N_excited = len(self.excited_state.basis_vectors)
-        dipole_operator = {q: np.zeros((N_excited, N_ground)) for q in [-1, 0, 1]}
-        statepairs = outer(
-            self.groundstate.basis_vectors.items(),
-            self.excited_state.basis_vectors.items(),
+        self.dipole_operator = dipole_operator(
+            self.Jg, self.Je, self.I, omega_0, lifetime
         )
-        for q in [-1, 0, 1]:
-            for ((F, mF), groundvec), ((Fprime, mFprime), excited_vec) in statepairs:
-                if (mFprime - mF != q) or abs(Fprime - F) > 1:
-                    continue
-                el = dipole_moment_zero_field(
-                    F,
-                    mF,
-                    Fprime,
-                    mFprime,
-                    self.J,
-                    self.Jprime,
-                    self.I,
-                    self.lifetime,
-                    self.omega_0,
-                )
-                dipole_operator[q] += el * ketbra(excited_vec, groundvec)
-        return dipole_operator
 
-    @lru_cache()
     def transitions(self, Bz):
         groundstates = self.groundstate.energy_eigenstates(Bz)
         excited_states = self.excited_state.energy_eigenstates(Bz)
@@ -464,15 +456,25 @@ class AtomicLine(object):
                     transitions[(alpha, mF), (alphaprime, mFprime)] = omega
         return transitions
 
-    @lru_cache()
     def transition_dipole_moment(self, alpha, mF, alphaprime, mFprime, Bz):
+        """The dipole transition matrix element <alpha', mF'|e r_q|alpha, mF> in Coulomb
+        metres, where q = mF' - mF, for a transition from a groundstate |alpha, mF> to
+        an excited state |alpha', mF'>. The matrix element for the corresponding excited
+        to groundstate transition can be computed as:
+
+           (-1)^q × <alpha', mF'|e r_q|alpha, mF>*
+        
+        but note that in the rotating wave approximation the Rabi frequency is computed
+        only from the ground-to-excited dipole transition matrix elements."""
         try:
             dipole_operator = self.dipole_operator[mFprime - mF]
         except KeyError:
             raise ValueError("require mF' - mF ∊ {-1, 0, 1}")
         _, groundstate = self.groundstate.energy_eigenstates(Bz)[alpha, mF]
-        _, excited_state = self.excited_state.energy_eigenstates(Bz)[alphaprime, mFprime]
-        return matrixel(excited_state, dipole_operator, groundstate).real
+        _, excited_state = self.excited_state.energy_eigenstates(Bz)[
+            alphaprime, mFprime
+        ]
+        return matrixel(excited_state, dipole_operator, groundstate)
 
 
 class FineStructureLine(object):
@@ -505,12 +507,20 @@ class FineStructureLine(object):
             transitions[(initial, final)] = freq
         return transitions
 
-    def transition_dipole_moment(self, J, alpha, m, Jprime, alphaprime, mprime, Bz):
-        if Jprime - J == self.line1.Jprime - self.line1.J:
+    def transition_dipole_moment(self, alpha, m, Je, alphaprime, mprime, Bz):
+        """The dipole transition matrix element <Je, alpha', mF'|e r_q|Jg, alpha, mF> in
+        Coulomb metres, where q = mF' - mF, for a transition from a groundstate |Jg,
+        alpha, mF> to an excited state |Je, alpha', mF'>. The matrix element for the
+        corresponding excited to groundstate transition can be computed as:
+
+           (-1)^q × <alpha', mF'|e r_q| J, alpha, mF>*
+
+        but note that in the rotating wave approximation the Rabi frequency is
+        computed only from the ground-to-excited dipole transition matrix elements."""
+        if Je == self.line1.Je:
             return self.line1.transition_dipole_moment(alpha, m, alphaprime, mprime, Bz)
-        elif Jprime - J == self.line2.Jprime - self.line2.J:
+        elif Je == self.line2.Je:
             return self.line2.transition_dipole_moment(alpha, m, alphaprime, mprime, Bz)
         else:
-            raise ValueError(
-                'Given J and Jprime do not match any of this line\'s transitions.'
-            )
+            msg = 'Given Je does not match any of this line\'s transitions.'
+            raise ValueError(msg)
