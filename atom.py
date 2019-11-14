@@ -1,9 +1,5 @@
-import os
-from tempfile import gettempdir
 import numpy as np
 from .wigner import Wigner3j
-import shelve
-from tqdm import tqdm
 import itertools
 
 pi = np.pi
@@ -54,13 +50,13 @@ def _halfint(x):
 
 
 def _cleanarrays(scale, *arrs):
-    """For arrays that have been computed numerically, set elements less than 10 ×
+    """For arrays that have been computed numerically, set elements less than 100 ×
     machine epsilon times `scale` to zero. This essentially rounds to exactly zero
     elements that would be zero if computed exactly, but are not due to floating point
     rounding error in cancellations. This should only be done when it is known that all
     nonzero elements will be above this threshold. Operates on the arrays in-place and
     returns None"""
-    threshold = 10 * np.finfo(float).eps * scale
+    threshold = 100 * np.finfo(float).eps * scale
     for arr in arrs:
         arr.real[np.abs(arr.real) < threshold] = 0
         if arr.dtype == np.complex:
@@ -91,6 +87,10 @@ def Hconj(A):
     """Hermitian conjugate of matrix in last two dimensions"""
     return A.conj().swapaxes(-1, -2)
 
+def matvec(A, v):
+    """Application of matrix A, which is a matrix in its last to dimenions, to vector v,
+    is a vector in its last dimension."""
+    return np.einsum('...ij,...j', A, v)
 
 def matrixel(u, A, v):
     """Matrix element between u and v, which are vectors in their last dimension, of A,
@@ -145,6 +145,20 @@ def make_FmF_basis(J, I):
         for mF in _halfint(np.arange(F, -F - 1, -1))
     ]
     return {nums: vec for nums, vec in zip(FmF, np.identity(len(FmF)))}
+
+
+def make_mF_subspaces(J, I):
+    """Return a dictionary mapping mF quantum numbers to matrices that select only
+    elements from a vector in the |F, mF> basis with that mF quantum number, returning a
+    smaller matrix with only those elements"""
+    subspaces = {}
+    FmF_basis = make_FmF_basis(J, I)
+    for mF in _halfint(np.arange(I + J, -I - J - 1, -1)):
+        Flist = _halfint(np.arange(I + J, max(abs(I - J), abs(mF)) - 1, -1))
+        sub_basis = {F: vec for F, vec in zip(Flist, np.identity(len(Flist)))}
+        P = sum(ketbra(sub_vec, FmF_basis[F, mF]) for F, sub_vec in sub_basis.items())
+        subspaces[mF] = P
+    return subspaces
 
 
 def ClebschGordan(j, m, j1, m1, j2, m2):
@@ -264,7 +278,7 @@ def dipole_operator(Jg, Je, I, omega_0, lifetime):
     # The reduced dipole moment for excited to ground transitions
     reduced_moment_J_e_to_g = reduced_dipole_moment_J(Jg, Je, omega_0, lifetime)
     # The reduced dipole moment for ground to excited transitions:
-    reduced_moment_J = (
+    reduced_moment_J_g_to_e = (
         (-1) ** (Jg - Je)
         * np.sqrt((2 * Jg + 1) / (2 * Je + 1))
         * reduced_moment_J_e_to_g.conj()
@@ -281,7 +295,7 @@ def dipole_operator(Jg, Je, I, omega_0, lifetime):
         # Then we will transform to obtain <Fe, mFe| e r_q| Fg, mFg> elements.
         dipole_operator_J = sum(
             ClebschGordan(Je, me, Jg, mg, 1, q)
-            * reduced_moment_J
+            * reduced_moment_J_g_to_e
             * ketbra(excited_vec, ground_vec)
             for (me, excited_vec), (mg, ground_vec) in outer(
                 make_J_basis(Je).items(), make_J_basis(Jg).items()
@@ -299,6 +313,8 @@ class AtomicState(object):
     ):
         self.I = I
         self.J = J
+        self.Ahfs = Ahfs
+        self.Bhfs = Bhfs
         self.Bmax_crossings = Bmax_crossings
         self.nB_crossings = nB_crossings
         J_ops, I_ops, F_ops = angular_momentum_product_space(J, I)
@@ -306,6 +322,7 @@ class AtomicState(object):
         self.Ix, self.Iy, self.Iz, self.I2 = I_ops
         self.Fx, self.Fy, self.Fz, self.F2 = F_ops
         self.basis_vectors = make_FmF_basis(J, I)
+        self.mF_subspaces = make_mF_subspaces(J, I)
 
         # Identity matrix in the |F, mF> basis:
         II = np.identity(len(self.basis_vectors))
@@ -313,6 +330,7 @@ class AtomicState(object):
         # I dot J in units of hbar**2:
         rIJ = (self.Ix @ self.Jx + self.Iy @ self.Jy + self.Iz @ self.Jz) / hbar ** 2
         _cleanarrays(1, rIJ)
+
         self.H_hfs = Ahfs * rIJ
         if Bhfs != 0:
             # When Bhfs is zero, this term has a division by zero that doesn't get
@@ -322,6 +340,7 @@ class AtomicState(object):
             numerator = 3 * rIJ @ rIJ + 3 / 2 * rIJ - I * (I + 1) * J * (J + 1) * II
             denominator = 2 * I * (2 * I - 1) * J * (2 * J - 1)
             self.H_hfs += Bhfs * numerator / denominator
+        # TODO: Chfs - octopole term. Only observed in Caesium
 
         # The following assumes that the sign convention is followed in
         # which gI has a negative sign and gJ a positive one:
@@ -329,83 +348,62 @@ class AtomicState(object):
         self.mu_y = -(gI * self.Iy + gJ * self.Jy) * mu_B / hbar
         self.mu_z = -(gI * self.Iz + gJ * self.Jz) * mu_B / hbar
 
-        # Lists of F and mF quantum numbers at small field for the states, sorted by
-        # energy from lowest to highest. These are used to identify the states that come
-        # back from numerical diagonalisation.
-        _, U = sorted_eigh(self.Htot(0))
-        evecs = Hconj(U)
-        E_Fz = matrixel(evecs, self.Fz, evecs).real
-        E_F2 = matrixel(evecs, self.F2, evecs).real
-        self._mF_by_energy = find_mF(E_Fz)
-        self._F_by_energy = find_F(E_F2)
-
-        # A key to store cached zeeman crossings so that we don't have to recompute them
-        # all the time. They will be stored in the system temporary directory.
-        cache_key = repr((I, J, gI, gJ, Ahfs, Bhfs, Bmax_crossings, nB_crossings))
-        cache_file = os.path.join(gettempdir(), 'alkali_zeeman_crossings_cache')
-        with shelve.open(cache_file) as cache:
-            if cache_key not in cache:
-                cache[cache_key] = self._find_crossings()
-            self.crossings = cache[cache_key]
+        # For each mF, construct the list of indices that would reorder a list of |F,
+        # mF> eigenstates, initially sorted by energy, to be ordered by F from highest
+        # to lowest. This is so that we can identify the states that come back from
+        # numerical diagonalisation. I haven't met an atom where sorting states of the
+        # same mF by energy wasn't the same as sorting them by F, but I don't know it to
+        # be a fact so I want to be sure!
+        self._energy_to_F_indices = {}
+        for m in self.mF_subspaces:
+            E = [
+                matrixel(vec, self.Htot(0), vec).real
+                for (F, mF), vec in self.basis_vectors.items()
+                if mF == m
+            ]
+            # Bit of a hack to make a kind of "inverse argsort"
+            inverse_argsort_indices = np.zeros(len(E), dtype=int)
+            inverse_argsort_indices[np.argsort(E)] = np.arange(len(E))
+            self._energy_to_F_indices[m] = inverse_argsort_indices
 
     def Htot(self, Bz):
         """Return total Hamiltonian for the given z magnetic field. if Bz is an array,
         the returned array will have the matrix dimensions as the last two dimensions,
         and B_z's dimensions as the initial dimensions."""
-        Bz = np.array(Bz, dtype=float)
-        # Degenerate eigenstates at zero field make it impossible to calculate
-        # simultaneous eigenstates of both Htot and Fz. We'll lift that degeneracy just
-        # a little bit. This only affects the accuracy of the energy eigenvalues in the
-        # 12th decimal place -- far beyond the accuracy of any of these calculations.
-        Bz[Bz < 1e-15] = 1e-15
-        return self.H_hfs - self.mu_z * Bz[..., np.newaxis, np.newaxis]
-
-    def _find_crossings(self):
-        B_range = np.linspace(0, self.Bmax_crossings, self.nB_crossings)
-        evals = [
-            sorted(np.linalg.eigh(self.Htot(B_range[0]))[0]),
-            sorted(np.linalg.eigh(self.Htot(B_range[1]))[0]),
-        ]
-        crossings = []
-        for Bz in tqdm(B_range[2:]):
-            predicted = 2 * np.array(evals[-1]) - np.array(evals[-2])
-            new_evals = np.array(sorted(np.linalg.eigh(self.Htot(Bz))[0]))
-            for _, (a, b) in crossings:
-                new_evals[a], new_evals[b] = new_evals[b], new_evals[a]
-            prediction_failures = []
-            for i, val in enumerate(new_evals):
-                bestmatch = min(abs(val - predicted))
-                if not bestmatch == abs(val - predicted[i]):
-                    prediction_failures.append(i)
-            if len(prediction_failures) == 2:
-                crossings.append(
-                    (Bz - 0.5 * (B_range[1] - B_range[0]), prediction_failures)
-                )
-                a, b = prediction_failures
-                new_evals[a], new_evals[b] = new_evals[b], new_evals[a]
-            evals.append(new_evals)
-        return crossings
+        if isinstance(Bz, np.ndarray):
+            Bz = Bz[..., np.newaxis, np.newaxis]
+        return self.H_hfs - self.mu_z * Bz
 
     def _solve(self, Bz):
-        evals, U = sorted_eigh(self.Htot(Bz))
-        # Now to apply some swapping to account for crossings at lower fields than we're
-        # at. The states will then be sorted by the energy eigenvalues that they
-        # converge to at low but nonzero field.
-        for field, (a, b) in self.crossings:
-            s = Bz > field
-            evals[s, a], evals[s, b] = evals[s, b], evals[s, a]
-            U[s, :, a], U[s, :, b] = U[s, :, b], U[s, :, a]
+        Htot = self.Htot(Bz)
+        # evals, U = sorted_eigh(Htot)
+        # return evals, U
+        U = []
+        evals = []
+        for mF, P in self.mF_subspaces.items():
+            H_sub = P @ Htot @ P.T
+            evals_mF, U_mF = sorted_eigh(H_sub)
+            # Eigenvalues and eigenvectors are sorted by energy. Sort them instead from
+            # alpha from highest to lowest using our knowledge of how the F states are
+            # ordered at low field (plus the knowledge that two states of different F by
+            # the same F never cross):
+            evals_mF = evals_mF[..., self._energy_to_F_indices[mF]]
+            U_mF = U_mF[..., self._energy_to_F_indices[mF], :]
+            U.append(P.T @ U_mF @ P)
+            evals.append(matvec(P.T, evals_mF))
+        U = sum(U)
+        evals = sum(evals)
         return evals, U
 
     def energy_eigenstates(self, Bz):
         evals, U = self._solve(Bz)
         evecs = Hconj(U)
         results = {}
-        for i, (alpha, mF) in enumerate(zip(self._F_by_energy, self._mF_by_energy)):
+        for i, ((alpha, mF), basis_vec) in enumerate(self.basis_vectors.items()):
             # Impose phase convention that each eigenvector's inner product with the
             # corresponding zero field eigenvector is real and positive:
             evec = evecs[..., i, :]
-            proj = braket(self.basis_vectors[alpha, mF], evec)[..., np.newaxis]
+            proj = braket(basis_vec, evec)[..., np.newaxis]
             evec /= proj / np.abs(proj ** 2)
             results[alpha, mF] = (evals[..., i], evec)
         return results

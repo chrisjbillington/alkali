@@ -58,10 +58,10 @@ if __name__ == '__main__':
     Bz = 34e-4
     transition_frequencies = rubidium_87_D_line.transitions(Bz)
     dipole_moment_1 = rubidium_87_D_line.transition_dipole_moment(
-        1 / 2, 2, -2, 1 / 2, 2, -2, Bz
+        2, -2, 1 / 2, 2, -2, Bz
     )
     dipole_moment_2 = rubidium_87_D_line.transition_dipole_moment(
-        1 / 2, 1, -1, 1 / 2, 1, -1, Bz
+        1, -1, 1 / 2, 1, -1, Bz
     )
 
 
