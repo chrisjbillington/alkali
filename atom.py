@@ -29,22 +29,26 @@ def outer(a, b):
 
 def _int(x):
     """Round x to an integer, returning an int dtype"""
-    x = np.round(np.array(x))
-    result = np.array(x, dtype=int)
-    assert np.all(abs(x - result) < 0.05)
+    if isinstance(x, np.ndarray):
+        result = np.array(np.round(x), dtype=int)
+    else:
+        result = int(round(x))
+    # We do not expect the rounding should be much:
+    assert np.all(abs(x - result) < 1e-3)
     return result
 
 
 def _halfint(x):
     """Round x to a half-integer, returning an int if the result is a whole number and a
     float otherwise"""
-    x = np.array(x)
     twice_x = np.round(2 * x)
     # Halve and decide whether to return as float or int (array)
     if np.any(twice_x % 2):
         result = twice_x / 2
     else:
-        result = np.array(twice_x // 2, dtype=int)
+        result = twice_x // 2
+        if isinstance(result, np.ndarray):
+            result =  result.astype(int)
     assert np.all(abs(x - result) < 0.05)
     return result
 
