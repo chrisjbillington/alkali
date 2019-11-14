@@ -1,5 +1,5 @@
 import numpy as np
-from .wigner import Wigner3j
+from .wigner import clebsch_gordan
 import itertools
 
 pi = np.pi
@@ -165,23 +165,13 @@ def make_mF_subspaces(J, I):
     return subspaces
 
 
-def ClebschGordan(j, m, j1, m1, j2, m2):
-    """return the Clebsch-Gordan coeffienct <j, m|j1, m1; j2, m2>"""
-    if m != m1 + m2:
-        return 0
-    # Workaround numpy issue https://github.com/numpy/numpy/issues/8917, Can't raise
-    # integers to negative integer powers if the power is a numpy integer:
-    j, m, j1, m1, j2, m2 = [float(x) for x in (j, m, j1, m1, j2, m2)]
-    return (-1) ** (j1 - j2 + m) * np.sqrt(2 * j + 1) * Wigner3j(j1, j2, j, m1, m2, -m)
-
-
 def U_CG(J, I):
     """Construct the unitary of Clebsch-Gordan coefficients that transforms a vector
     from the |mJ, mI> basis into the |F, mF> basis for a given J and I. The convention
     used for ordering the basis vectors is as described by make_mJmI_basis() and
     make_FmF_basis()."""
     return sum(
-        ClebschGordan(F, mF, J, mJ, I, mI) * ketbra(FmFvec, mJmIvec)
+        clebsch_gordan(J, mJ, I, mI, F, mF) * ketbra(FmFvec, mJmIvec)
         for ((F, mF), FmFvec), ((mJ, mI), mJmIvec) in outer(
             make_FmF_basis(J, I).items(), make_mJmI_basis(J, I).items()
         )
@@ -298,7 +288,7 @@ def dipole_operator(Jg, Je, I, omega_0, lifetime):
         # First we compute the <Je, me| e r_q| Jg, mg> elements of the dipole operator.
         # Then we will transform to obtain <Fe, mFe| e r_q| Fg, mFg> elements.
         dipole_operator_J = sum(
-            ClebschGordan(Je, me, Jg, mg, 1, q)
+            clebsch_gordan(Jg, mg, 1, q, Je, me)
             * reduced_moment_J_g_to_e
             * ketbra(excited_vec, ground_vec)
             for (me, excited_vec), (mg, ground_vec) in outer(

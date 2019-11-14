@@ -66,7 +66,7 @@ if __name__ == '__main__':
 
 
     # Another example:
-    Bz = linspace(0, 200e-4, 1000)
+    Bz = linspace(-200e-4, 200e-4, 1000)
     eigenstates = rubidium_87_P32_state.energy_eigenstates(Bz)
 
     for (alpha, mF), (E, psi) in eigenstates.items():
