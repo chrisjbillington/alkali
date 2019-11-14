@@ -91,10 +91,12 @@ def Hconj(A):
     """Hermitian conjugate of matrix in last two dimensions"""
     return A.conj().swapaxes(-1, -2)
 
+
 def matvec(A, v):
-    """Application of matrix A, which is a matrix in its last to dimenions, to vector v,
+    """Application of matrix A, which is a matrix in its last two dimenions, to vector v,
     is a vector in its last dimension."""
     return np.einsum('...ij,...j', A, v)
+
 
 def matrixel(u, A, v):
     """Matrix element between u and v, which are vectors in their last dimension, of A,
@@ -368,38 +370,48 @@ class AtomicState(object):
             Bz = Bz[..., np.newaxis, np.newaxis]
         return self.H_hfs - self.mu_z * Bz
 
-    def _solve(self, Bz):
+    def solve(self, Bz):
+        """Diagonalise the Hyperfine + Zeeman Hamiltonian for a given Bz, and return
+        eigenvalues and unitary matrix of eigenvectors |alpha, mF> (as column vectors)
+        in the |F, mF> basis. All eigenvectors returned are eigenvectors of Fz even in
+        the case of degeneracy, and are sorted by alpha from highest to lowest, then by
+        mF from highest to lowest. A phase convention is imposed such that the
+        projection <F=alpha, mF|alpha, mF> of each eigenvector onto its corresponding
+        zero-field eigenvector is real and positive."""
         Htot = self.Htot(Bz)
-        # evals, U = sorted_eigh(Htot)
-        # return evals, U
         U = []
         evals = []
+        # Diagonalise submatrices for states of fixed mF individually. This means we
+        # don't have to worry about degeneracy or crossings.
         for mF, P in self.mF_subspaces.items():
             H_sub = P @ Htot @ P.T
             evals_mF, U_mF = sorted_eigh(H_sub)
-            # Eigenvalues and eigenvectors are sorted by energy. Sort them instead from
+            # Eigenvalues and eigenvectors are sorted by energy. Sort them instead by
             # alpha from highest to lowest using our knowledge of how the F states are
-            # ordered at low field (plus the knowledge that two states of different F by
-            # the same F never cross):
+            # ordered at low field (and the fact that they never cross):
             evals_mF = evals_mF[..., self._energy_to_F_indices[mF]]
             U_mF = U_mF[..., self._energy_to_F_indices[mF], :]
+            # Expand results back into the full space to be summed together at the end
+            # (effectively concatenating the submatrices and lists of eigenvalues back
+            # together)
             U.append(P.T @ U_mF @ P)
             evals.append(matvec(P.T, evals_mF))
         U = sum(U)
         evals = sum(evals)
+
+        # Impose phase convention that each eigenvector's inner product with the
+        # corresponding zero field eigenvector is real and positive:
+        proj = braket(np.identity(U.shape[-1]), U)
+        phase_factor = proj / np.abs(proj ** 2)
+        U /= phase_factor[..., np.newaxis]
         return evals, U
 
     def energy_eigenstates(self, Bz):
-        evals, U = self._solve(Bz)
+        evals, U = self.solve(Bz)
         evecs = Hconj(U)
         results = {}
-        for i, ((alpha, mF), basis_vec) in enumerate(self.basis_vectors.items()):
-            # Impose phase convention that each eigenvector's inner product with the
-            # corresponding zero field eigenvector is real and positive:
-            evec = evecs[..., i, :]
-            proj = braket(basis_vec, evec)[..., np.newaxis]
-            evec /= proj / np.abs(proj ** 2)
-            results[alpha, mF] = (evals[..., i], evec)
+        for i, ((alpha, mF), _) in enumerate(self.basis_vectors.items()):
+            results[alpha, mF] = (evals[..., i], evecs[..., i, :])
         return results
 
     def transitions(self, Bz):

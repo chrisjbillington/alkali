@@ -7,8 +7,9 @@ from numpy import floor, sqrt, arange
 # included in GWFrames under the terms of the BSD license, under which it was implicitly
 # licensed by virtue of being uploaded to the mathworks.com file exchange.
 
+
 def clebsch_gordan(j1, m1, j2, m2, j, m):
-    """Compute the Clebsch-Gordan coeffienct:
+    """Compute the Clebsch-Gordan coefficient:
 
     <j1, m1; j2, m2|j, m> = <j, m|j1, m1; j2, m2>.
 
@@ -19,6 +20,7 @@ def clebsch_gordan(j1, m1, j2, m2, j, m):
     # integers to negative integer powers if the power is a numpy integer:
     j, m, j1, m1, j2, m2 = [float(x) for x in (j, m, j1, m1, j2, m2)]
     return (-1) ** (j1 - j2 + m) * sqrt(2 * j + 1) * wigner_3j(j1, j2, j, m1, m2, -m)
+
 
 def wigner_3j(j1, j2, j3, m1, m2, m3):
     R""" Compute the Wigner 3j symbol:
