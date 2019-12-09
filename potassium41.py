@@ -1,6 +1,6 @@
 from __future__ import division
-from pylab import *
-
+from numpy import pi, linspace
+from matplotlib.pyplot import plot, grid, xlabel, ylabel, legend, show
 from .atom import AtomicState, AtomicLine, FineStructureLine, hbar, c, epsilon_0, e, d_B
        
 # 41K D line properties:
