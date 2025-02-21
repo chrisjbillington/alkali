@@ -63,7 +63,7 @@ def _cleanarrays(scale, *arrs):
     threshold = 100 * np.finfo(float).eps * scale
     for arr in arrs:
         arr.real[np.abs(arr.real) < threshold] = 0
-        if arr.dtype == np.complex:
+        if arr.dtype == np.complex128:
             arr.imag[np.abs(arr.imag) < threshold] = 0
 
 
