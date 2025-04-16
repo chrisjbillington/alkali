@@ -93,8 +93,8 @@ def Hconj(A):
 
 
 def matvec(A, v):
-    """Application of matrix A, which is a matrix in its last two dimenions, to vector v,
-    is a vector in its last dimension."""
+    """Application of matrix A, which is a matrix in its last two dimensions, to vector
+    v, is a vector in its last dimension."""
     return np.einsum('...ij,...j', A, v)
 
 
